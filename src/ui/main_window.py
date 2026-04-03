@@ -1,0 +1,848 @@
+import math
+from typing import Optional
+
+from PyQt6.QtCore import (
+    Qt,
+    QTimer,
+    QPropertyAnimation,
+    QEasingCurve,
+    QRectF,
+    QPointF,
+    pyqtSignal,
+    pyqtProperty,
+    QSize,
+)
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QConicalGradient,
+    QFont,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QRadialGradient,
+    QBrush,
+)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
+    QSpacerItem,
+    QGraphicsDropShadowEffect,
+)
+
+from src.utils.config import ConfigManager
+from src.utils.i18n import t, is_rtl, load_language
+from src.utils.cache import TranslationCache
+from src.core.gemini_client import GeminiClient, TranslateWorker, AudioTranslateWorker
+from src.core.audio_capture import AudioCapture
+from src.core.text_extractor import ClipboardMonitor
+from src.ui.overlay import OverlayWindow
+from src.ui.settings_window import SettingsWindow
+
+
+LANGUAGES = [
+    ("Auto Detect", "auto"),
+    ("Japanese", "ja"),
+    ("Chinese", "zh"),
+    ("Korean", "ko"),
+    ("English", "en"),
+    ("Arabic", "ar"),
+    ("French", "fr"),
+    ("German", "de"),
+    ("Spanish", "es"),
+    ("Russian", "ru"),
+    ("Portuguese", "pt"),
+]
+
+COLOR_BG = "#171717"
+COLOR_PANEL = "#1e1e1e"
+COLOR_ACCENT = "#0f3460"
+COLOR_HIGHLIGHT = "#e94560"
+
+
+class PowerButton(QWidget):
+    """Custom circular power toggle button with animated border ring."""
+
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._active = False
+        self._ring_angle = 0.0
+        self._glow_opacity = 0.0
+        self._hover = False
+
+        self.setFixedSize(80, 80)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        # Ring rotation animation
+        self._ring_timer = QTimer(self)
+        self._ring_timer.setInterval(16)  # ~60fps
+        self._ring_timer.timeout.connect(self._advance_ring)
+
+        # Glow pulse animation
+        self._glow_anim = QPropertyAnimation(self, b"glowOpacity")
+        self._glow_anim.setDuration(1200)
+        self._glow_anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._glow_anim.setStartValue(0.3)
+        self._glow_anim.setEndValue(0.8)
+        self._glow_anim.setLoopCount(-1)  # infinite
+
+        # Transition animation for glow fade in/out on toggle
+        self._transition_anim = QPropertyAnimation(self, b"glowOpacity")
+        self._transition_anim.setDuration(300)
+        self._transition_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+    def _get_glow_opacity(self) -> float:
+        return self._glow_opacity
+
+    def _set_glow_opacity(self, value: float):
+        self._glow_opacity = value
+        self.update()
+
+    glowOpacity = pyqtProperty(float, _get_glow_opacity, _set_glow_opacity)
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    @active.setter
+    def active(self, value: bool):
+        if self._active == value:
+            return
+        self._active = value
+        if self._active:
+            self._start_active_animations()
+        else:
+            self._stop_active_animations()
+        self.update()
+
+    def _start_active_animations(self):
+        self._ring_timer.start()
+        self._transition_anim.stop()
+        self._glow_anim.stop()
+        self._transition_anim.setStartValue(self._glow_opacity)
+        self._transition_anim.setEndValue(0.5)
+        self._transition_anim.finished.connect(self._begin_pulse)
+        self._transition_anim.start()
+
+    def _begin_pulse(self):
+        try:
+            self._transition_anim.finished.disconnect(self._begin_pulse)
+        except TypeError:
+            pass
+        if self._active:
+            self._glow_anim.setStartValue(0.3)
+            self._glow_anim.setEndValue(0.8)
+            self._glow_anim.start()
+
+    def _stop_active_animations(self):
+        self._ring_timer.stop()
+        self._glow_anim.stop()
+        try:
+            self._transition_anim.finished.disconnect(self._begin_pulse)
+        except TypeError:
+            pass
+        self._transition_anim.setStartValue(self._glow_opacity)
+        self._transition_anim.setEndValue(0.0)
+        self._transition_anim.start()
+
+    def _advance_ring(self):
+        self._ring_angle = (self._ring_angle + 2.0) % 360.0
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._active = not self._active
+            if self._active:
+                self._start_active_animations()
+            else:
+                self._stop_active_animations()
+            self.toggled.emit(self._active)
+            self.update()
+            event.accept()
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        w = self.width()
+        h = self.height()
+        cx = w / 2.0
+        cy = h / 2.0
+        radius = min(w, h) / 2.0 - 4.0
+
+        # Glow effect when active
+        if self._active and self._glow_opacity > 0.01:
+            glow_gradient = QRadialGradient(QPointF(cx, cy), radius + 10)
+            glow_color = QColor(COLOR_HIGHLIGHT)
+            glow_color.setAlphaF(self._glow_opacity * 0.5)
+            glow_gradient.setColorAt(0.5, glow_color)
+            glow_color_outer = QColor(COLOR_HIGHLIGHT)
+            glow_color_outer.setAlphaF(0.0)
+            glow_gradient.setColorAt(1.0, glow_color_outer)
+            painter.setBrush(QBrush(glow_gradient))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QPointF(cx, cy), radius + 10, radius + 10)
+
+        # Animated gradient ring when active
+        if self._active:
+            ring_gradient = QConicalGradient(QPointF(cx, cy), self._ring_angle)
+            ring_gradient.setColorAt(0.0, QColor(COLOR_ACCENT))
+            ring_gradient.setColorAt(0.25, QColor(COLOR_HIGHLIGHT))
+            ring_gradient.setColorAt(0.5, QColor(COLOR_ACCENT))
+            ring_gradient.setColorAt(0.75, QColor(COLOR_HIGHLIGHT))
+            ring_gradient.setColorAt(1.0, QColor(COLOR_ACCENT))
+            pen = QPen(QBrush(ring_gradient), 3.0)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QPointF(cx, cy), radius, radius)
+
+        # Circle background
+        bg_color = QColor(COLOR_PANEL)
+        if self._hover and not self._active:
+            bg_color = bg_color.lighter(130)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(bg_color))
+        inner_radius = radius - 3.0 if self._active else radius
+        painter.drawEllipse(QPointF(cx, cy), inner_radius, inner_radius)
+
+        # Power icon
+        icon_color = QColor("#ffffff") if self._active else QColor("#888888")
+        if self._hover and not self._active:
+            icon_color = QColor("#bbbbbb")
+        pen = QPen(icon_color, 2.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        # Arc (broken circle of the power symbol)
+        icon_radius = inner_radius * 0.35
+        arc_rect = QRectF(cx - icon_radius, cy - icon_radius + 2, icon_radius * 2, icon_radius * 2)
+        # Draw arc from ~40 degrees to ~320 degrees (leaving gap at top)
+        # QPainter drawArc uses 1/16th of a degree, positive = counter-clockwise
+        start_angle = 60 * 16   # start at 60 degrees
+        span_angle = 240 * 16   # span 240 degrees
+        painter.drawArc(arc_rect, start_angle, span_angle)
+
+        # Vertical line at top of power symbol
+        line_len = icon_radius * 0.8
+        painter.drawLine(
+            QPointF(cx, cy - icon_radius + 2 - 1),
+            QPointF(cx, cy - icon_radius + 2 + line_len),
+        )
+
+        painter.end()
+
+    def sizeHint(self) -> QSize:
+        return QSize(80, 80)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+
+        self._force_quit = False
+        self._workers: list = []
+
+        # Core components
+        self.config = ConfigManager()
+        self.gemini_client = GeminiClient(
+            api_key=self.config.get("api_key", ""),
+            model=self.config.get("model", "gemini-2.0-flash"),
+        )
+        self.gemini_client.system_prompt = self.config.get(
+            "system_prompt",
+            "You are a game translator. Translate the following {source_lang} text to {target_lang}. Return ONLY the translation, nothing else.",
+        )
+        self.gemini_client.context_enabled = self.config.get("context_memory", True)
+        self.gemini_client.set_max_context(self.config.get("max_context", 10))
+        self.cache = TranslationCache()
+        self.audio_capture = AudioCapture()
+        self.clipboard_monitor = ClipboardMonitor()
+
+        # Overlay
+        self.overlay = OverlayWindow(self.config.data)
+
+        # Load i18n
+        ui_lang = self.config.get("ui_language", "en")
+        load_language(ui_lang)
+
+        # Window setup
+        self.setWindowTitle("LunaLite")
+        self.setFixedSize(420, 580)
+        self.setWindowFlags(
+            self.windowFlags() & ~Qt.WindowType.WindowMaximizeButtonHint
+        )
+
+        # Build UI
+        self._setup_ui()
+        self._apply_global_style()
+        self._setup_tray()
+        self._connect_signals()
+        self._load_language_combos()
+
+    def _setup_ui(self):
+        central = QWidget(self)
+        self.setCentralWidget(central)
+
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(12)
+
+        # --- Title ---
+        self._title_label = QLabel("\U0001f319 LunaLite")
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_font = QFont()
+        title_font.setPointSize(22)
+        title_font.setBold(True)
+        self._title_label.setFont(title_font)
+        self._title_label.setStyleSheet("color: #ffffff; background: transparent;")
+        main_layout.addWidget(self._title_label)
+
+        main_layout.addSpacerItem(QSpacerItem(1, 8, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+
+        # --- Status indicator ---
+        status_container = QWidget()
+        status_layout = QHBoxLayout(status_container)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(8)
+        status_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._status_dot = QLabel()
+        self._status_dot.setFixedSize(10, 10)
+        self._status_dot.setStyleSheet(
+            "background-color: #888888; border-radius: 5px; border: none;"
+        )
+        status_layout.addWidget(self._status_dot)
+
+        self._status_label = QLabel("Idle")
+        self._status_label.setStyleSheet("color: #888888; font-size: 13px; background: transparent;")
+        status_layout.addWidget(self._status_label)
+
+        main_layout.addWidget(status_container)
+
+        main_layout.addSpacerItem(QSpacerItem(1, 12, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+
+        # --- Power button ---
+        power_container = QWidget()
+        power_layout = QHBoxLayout(power_container)
+        power_layout.setContentsMargins(0, 0, 0, 0)
+        power_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._power_button = PowerButton()
+        power_layout.addWidget(self._power_button)
+        main_layout.addWidget(power_container)
+
+        main_layout.addSpacerItem(QSpacerItem(1, 12, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+
+        # --- Language selectors ---
+        lang_container = QWidget()
+        lang_layout = QHBoxLayout(lang_container)
+        lang_layout.setContentsMargins(10, 0, 10, 0)
+        lang_layout.setSpacing(8)
+        lang_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._source_lang_combo = QComboBox()
+        self._source_lang_combo.setMinimumWidth(130)
+        self._source_lang_combo.setFixedHeight(32)
+        lang_layout.addWidget(self._source_lang_combo)
+
+        arrow_label = QLabel("\u2192")
+        arrow_label.setStyleSheet("color: #ffffff; font-size: 18px; background: transparent;")
+        arrow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        arrow_label.setFixedWidth(24)
+        lang_layout.addWidget(arrow_label)
+
+        self._target_lang_combo = QComboBox()
+        self._target_lang_combo.setMinimumWidth(130)
+        self._target_lang_combo.setFixedHeight(32)
+        lang_layout.addWidget(self._target_lang_combo)
+
+        main_layout.addWidget(lang_container)
+
+        main_layout.addSpacerItem(QSpacerItem(1, 12, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+
+        # --- Token counter ---
+        self._token_label = QLabel("Tokens: 0 in / 0 out")
+        self._token_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._token_label.setStyleSheet(
+            "color: #aaaaaa; font-size: 12px; background: transparent;"
+        )
+        main_layout.addWidget(self._token_label)
+
+        # --- Context indicator ---
+        context_container = QWidget()
+        context_layout = QHBoxLayout(context_container)
+        context_layout.setContentsMargins(0, 0, 0, 0)
+        context_layout.setSpacing(6)
+        context_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        max_ctx = self.config.get("max_context", 10)
+        self._context_label = QLabel(f"\U0001f4be {t('context_indicator', 'Context')}: 0/{max_ctx}")
+        self._context_label.setStyleSheet(
+            "color: #aaaaaa; font-size: 12px; background: transparent;"
+        )
+        context_layout.addWidget(self._context_label)
+
+        self._clear_context_btn = QPushButton("\U0001f5d1\ufe0f")
+        self._clear_context_btn.setFixedSize(24, 24)
+        self._clear_context_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clear_context_btn.setToolTip(t("clear_context", "Clear Context"))
+        self._clear_context_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 14px;
+                padding: 0;
+            }
+            QPushButton:hover {
+                background-color: rgba(233, 69, 96, 0.3);
+                border-radius: 4px;
+            }
+        """)
+        context_layout.addWidget(self._clear_context_btn)
+
+        main_layout.addWidget(context_container)
+
+        main_layout.addSpacerItem(QSpacerItem(1, 8, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
+
+        # --- Settings button ---
+        self._settings_btn = QPushButton("\u2699 Settings")
+        self._settings_btn.setFixedHeight(38)
+        self._settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._settings_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLOR_ACCENT};
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                padding: 6px 20px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLOR_HIGHLIGHT};
+            }}
+            QPushButton:pressed {{
+                background-color: #c7374d;
+            }}
+        """)
+        main_layout.addWidget(self._settings_btn)
+
+        # Push remaining space to bottom
+        main_layout.addStretch(1)
+
+    def _apply_global_style(self):
+        combo_style = f"""
+            QComboBox {{
+                background-color: {COLOR_PANEL};
+                color: #ffffff;
+                border: 1px solid {COLOR_ACCENT};
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-size: 13px;
+            }}
+            QComboBox:hover {{
+                border-color: {COLOR_HIGHLIGHT};
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border-left: 1px solid {COLOR_ACCENT};
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                background-color: {COLOR_ACCENT};
+            }}
+            QComboBox::down-arrow {{
+                image: none;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #ffffff;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {COLOR_PANEL};
+                color: #ffffff;
+                selection-background-color: {COLOR_ACCENT};
+                selection-color: #ffffff;
+                border: 1px solid {COLOR_ACCENT};
+                border-radius: 4px;
+                outline: none;
+                padding: 2px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 28px;
+                padding: 4px 8px;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: {COLOR_ACCENT};
+            }}
+        """
+        self._source_lang_combo.setStyleSheet(combo_style)
+        self._target_lang_combo.setStyleSheet(combo_style)
+
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: {COLOR_BG};
+            }}
+            QWidget {{
+                background-color: {COLOR_BG};
+            }}
+        """)
+
+    def _load_language_combos(self):
+        self._source_lang_combo.blockSignals(True)
+        self._target_lang_combo.blockSignals(True)
+
+        self._source_lang_combo.clear()
+        self._target_lang_combo.clear()
+
+        for name, code in LANGUAGES:
+            self._source_lang_combo.addItem(name, code)
+            self._target_lang_combo.addItem(name, code)
+
+        # Set current from config
+        source = self.config.get("source_lang", "auto")
+        target = self.config.get("target_lang", "ar")
+        for i, (_, code) in enumerate(LANGUAGES):
+            if code == source:
+                self._source_lang_combo.setCurrentIndex(i)
+            if code == target:
+                self._target_lang_combo.setCurrentIndex(i)
+
+        self._source_lang_combo.blockSignals(False)
+        self._target_lang_combo.blockSignals(False)
+
+    def _setup_tray(self):
+        # Create a moon icon programmatically
+        tray_pixmap = QPixmap(32, 32)
+        tray_pixmap.fill(Qt.GlobalColor.transparent)
+        p = QPainter(tray_pixmap)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        # Draw crescent moon
+        moon_color = QColor("#e8d44d")
+        p.setBrush(QBrush(moon_color))
+        p.setPen(Qt.PenStyle.NoPen)
+        # Full circle
+        p.drawEllipse(4, 4, 24, 24)
+        # Cut-out circle to create crescent
+        p.setBrush(QBrush(QColor(0, 0, 0, 0)))
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+        p.drawEllipse(10, 2, 22, 22)
+        p.end()
+
+        tray_icon = QIcon(tray_pixmap)
+
+        self._tray = QSystemTrayIcon(tray_icon, self)
+        self._tray.setToolTip("LunaLite")
+
+        # Context menu
+        tray_menu = QMenu()
+        tray_menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {COLOR_PANEL};
+                color: #ffffff;
+                border: 1px solid {COLOR_ACCENT};
+                border-radius: 6px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 24px;
+                border-radius: 4px;
+            }}
+            QMenu::item:selected {{
+                background-color: {COLOR_ACCENT};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {COLOR_ACCENT};
+                margin: 4px 8px;
+            }}
+        """)
+
+        self._tray_show_action = QAction("Show/Hide Window", self)
+        self._tray_show_action.triggered.connect(self._toggle_window_visibility)
+        tray_menu.addAction(self._tray_show_action)
+
+        self._tray_startstop_action = QAction("Start", self)
+        self._tray_startstop_action.triggered.connect(self._tray_toggle_running)
+        tray_menu.addAction(self._tray_startstop_action)
+
+        tray_settings_action = QAction("Settings", self)
+        tray_settings_action.triggered.connect(self._open_settings)
+        tray_menu.addAction(tray_settings_action)
+
+        tray_menu.addSeparator()
+
+        tray_exit_action = QAction("Exit", self)
+        tray_exit_action.triggered.connect(self._exit_app)
+        tray_menu.addAction(tray_exit_action)
+
+        self._tray.setContextMenu(tray_menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+    def _connect_signals(self):
+        # Power button
+        self._power_button.toggled.connect(self._on_power_toggled)
+
+        # Gemini client signals
+        self.gemini_client.token_count_updated.connect(self._update_token_label)
+        self.gemini_client.error_occurred.connect(self._on_error)
+        self.gemini_client.context_changed.connect(self._update_context_label)
+
+        # Language combo changes
+        self._source_lang_combo.currentIndexChanged.connect(self._on_source_lang_changed)
+        self._target_lang_combo.currentIndexChanged.connect(self._on_target_lang_changed)
+
+        # Settings button
+        self._settings_btn.clicked.connect(self._open_settings)
+
+        # Clear context button
+        self._clear_context_btn.clicked.connect(self._on_clear_context)
+
+    # --- Status management ---
+
+    def _set_status(self, state: str):
+        if state == "running":
+            self._status_dot.setStyleSheet(
+                "background-color: #00cc66; border-radius: 5px; border: none;"
+            )
+            self._status_label.setText("Running")
+            self._status_label.setStyleSheet(
+                "color: #00cc66; font-size: 13px; background: transparent;"
+            )
+        elif state == "paused":
+            self._status_dot.setStyleSheet(
+                "background-color: #f0c040; border-radius: 5px; border: none;"
+            )
+            self._status_label.setText("Paused")
+            self._status_label.setStyleSheet(
+                "color: #f0c040; font-size: 13px; background: transparent;"
+            )
+        else:
+            self._status_dot.setStyleSheet(
+                "background-color: #888888; border-radius: 5px; border: none;"
+            )
+            self._status_label.setText("Idle")
+            self._status_label.setStyleSheet(
+                "color: #888888; font-size: 13px; background: transparent;"
+            )
+
+    # --- Power toggle ---
+
+    def _on_power_toggled(self, active: bool):
+        if active:
+            self._start_translation()
+        else:
+            self._stop_translation()
+
+    def _start_translation(self):
+        mode = self.config.get("translation_mode", "text")
+        if mode == "text":
+            self.clipboard_monitor.text_changed.connect(self._on_text_captured)
+            self.clipboard_monitor.start()
+        elif mode == "audio":
+            self.audio_capture.audio_chunk_ready.connect(self._on_audio_captured)
+            self.audio_capture.start()
+
+        self.overlay.show()
+        self._set_status("running")
+        self._tray_startstop_action.setText("Stop")
+
+    def _stop_translation(self):
+        if self.clipboard_monitor.is_running:
+            self.clipboard_monitor.stop()
+            try:
+                self.clipboard_monitor.text_changed.disconnect(self._on_text_captured)
+            except TypeError:
+                pass
+
+        if self.audio_capture.is_running:
+            self.audio_capture.stop()
+            try:
+                self.audio_capture.audio_chunk_ready.disconnect(self._on_audio_captured)
+            except TypeError:
+                pass
+
+        self.overlay.hide()
+        self._set_status("idle")
+        self._tray_startstop_action.setText("Start")
+
+    # --- Translation handlers ---
+
+    def _on_text_captured(self, text: str):
+        if not text.strip():
+            return
+
+        source_lang = self._source_lang_combo.currentData() or "auto"
+        target_lang = self._target_lang_combo.currentData() or "ar"
+
+        # Check cache
+        cached = self.cache.get(text, source_lang, target_lang)
+        if cached:
+            self.overlay.set_text(cached)
+            self.overlay.set_rtl(is_rtl())
+            return
+
+        # Run translation in worker thread
+        worker = TranslateWorker(self.gemini_client, text, source_lang, target_lang)
+        worker.finished.connect(
+            lambda result, t=text, sl=source_lang, tl=target_lang: self._on_text_translated(
+                result, t, sl, tl
+            )
+        )
+        worker.error.connect(self._on_error)
+        self._workers.append(worker)
+        worker.finished.connect(lambda _w=worker: self._cleanup_worker(_w))
+        worker.error.connect(lambda _e, _w=worker: self._cleanup_worker(_w))
+        worker.start()
+
+    def _on_text_translated(self, result: str, source_text: str, source_lang: str, target_lang: str):
+        if result:
+            self.cache.put(source_text, source_lang, target_lang, result)
+            self.overlay.set_text(result)
+            self.overlay.set_rtl(is_rtl())
+
+    def _on_audio_captured(self, wav_bytes: bytes):
+        source_lang = self._source_lang_combo.currentData() or "auto"
+        target_lang = self._target_lang_combo.currentData() or "ar"
+
+        worker = AudioTranslateWorker(self.gemini_client, wav_bytes, source_lang, target_lang)
+        worker.finished.connect(self._on_audio_translated)
+        worker.error.connect(self._on_error)
+        self._workers.append(worker)
+        worker.finished.connect(lambda _w=worker: self._cleanup_worker(_w))
+        worker.error.connect(lambda _e, _w=worker: self._cleanup_worker(_w))
+        worker.start()
+
+    def _on_audio_translated(self, result: str):
+        if result.strip():
+            self.overlay.set_text(result)
+            self.overlay.set_rtl(is_rtl())
+
+    def _cleanup_worker(self, worker):
+        if worker in self._workers:
+            self._workers.remove(worker)
+
+    # --- Token / error display ---
+
+    def _update_context_label(self, current: int, max_size: int):
+        self._context_label.setText(f"\U0001f4be {t('context_indicator', 'Context')}: {current}/{max_size}")
+
+    def _on_clear_context(self):
+        self.gemini_client.clear_context()
+
+    def _update_token_label(self, input_tokens: int, output_tokens: int):
+        self._token_label.setText(f"Tokens: {input_tokens} in / {output_tokens} out")
+
+    def _on_error(self, message: str):
+        self._status_label.setText(f"Error: {message[:60]}")
+        self._status_label.setStyleSheet(
+            "color: #e94560; font-size: 13px; background: transparent;"
+        )
+        self._status_dot.setStyleSheet(
+            "background-color: #e94560; border-radius: 5px; border: none;"
+        )
+
+    # --- Language combos ---
+
+    def _on_source_lang_changed(self, index: int):
+        code = self._source_lang_combo.itemData(index)
+        if code is not None:
+            self.config.set("source_lang", code)
+
+    def _on_target_lang_changed(self, index: int):
+        code = self._target_lang_combo.itemData(index)
+        if code is not None:
+            self.config.set("target_lang", code)
+
+    # --- Settings ---
+
+    def _open_settings(self):
+        dialog = SettingsWindow(self.config, self.gemini_client, parent=self)
+        if dialog.exec():
+            # Reload config
+            self.config.load()
+            self.gemini_client.api_key = self.config.get("api_key", "")
+            self.gemini_client.model = self.config.get("model", "gemini-2.0-flash")
+
+            # Apply context/prompt settings
+            self.gemini_client.system_prompt = self.config.get(
+                "system_prompt",
+                "You are a game translator. Translate the following {source_lang} text to {target_lang}. Return ONLY the translation, nothing else.",
+            )
+            self.gemini_client.context_enabled = self.config.get("context_memory", True)
+            self.gemini_client.set_max_context(self.config.get("max_context", 10))
+            self._update_context_label(
+                self.gemini_client.get_context_size(),
+                self.gemini_client.max_context,
+            )
+
+            # Reload language
+            ui_lang = self.config.get("ui_language", "en")
+            load_language(ui_lang)
+
+            # Update language combos
+            self._load_language_combos()
+
+    # --- System tray ---
+
+    def _toggle_window_visibility(self):
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+    def _tray_toggle_running(self):
+        new_state = not self._power_button.active
+        self._power_button.active = new_state
+        if new_state:
+            self._start_translation()
+        else:
+            self._stop_translation()
+        self._power_button.toggled.emit(new_state)
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._toggle_window_visibility()
+
+    # --- Close / Exit ---
+
+    def closeEvent(self, event):
+        if self._force_quit:
+            self._stop_translation()
+            self.cache.close()
+            self._tray.hide()
+            event.accept()
+        else:
+            event.ignore()
+            self.hide()
+
+    def _exit_app(self):
+        self._force_quit = True
+        self.close()
+        QApplication.quit()
