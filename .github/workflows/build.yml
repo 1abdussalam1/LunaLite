@@ -1,0 +1,58 @@
+name: Build LunaLite
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+
+      - name: Generate icon
+        run: python scripts/create_icon.py
+
+      - name: Build EXE
+        run: python build.py
+
+      - name: Zip output
+        run: |
+          cd dist
+          Compress-Archive -Path LunaLite -DestinationPath LunaLite-windows-x64.zip
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/LunaLite-windows-x64.zip
+          name: LunaLite ${{ github.ref_name }}
+          body: |
+            ## 🌙 LunaLite ${{ github.ref_name }}
+            
+            ### تحميل / Download
+            ⬇️ **LunaLite-windows-x64.zip** 
+            
+            ### تشغيل / Run
+            1. فك الضغط
+            2. شغّل `LunaLite.exe`
+            3. أدخل Gemini API Key وانطلق! 🚀
+            
+            ### متطلبات / Requirements
+            - Windows 10/11 (64-bit)
+            - لا يحتاج Python أو أي مكتبات ✅
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
