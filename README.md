@@ -13,22 +13,37 @@ Real-time game translation tool powered by Google Gemini AI.
 - **RTL Support**: Full Arabic RTL layout support
 - **Bilingual UI**: English and Arabic interface
 
-## Installation
+## Run in Development
 
 ```bash
 pip install -r requirements.txt
-```
-
-## Usage
-
-```bash
-python -m src.main
+cd src && python main.py
 ```
 
 1. Open Settings and enter your Gemini API key
 2. Select source and target languages
 3. Choose translation mode (Text or Audio)
 4. Click the power button to start translating
+
+## Build Standalone EXE (Windows)
+
+No Python installation required for end users.
+
+```bash
+pip install -r requirements-build.txt
+python scripts/create_icon.py
+python build.py
+```
+
+Output: `dist/LunaLite/LunaLite.exe`
+
+Zip `dist/LunaLite/` and share!
+
+For reproducible builds using the spec file:
+
+```bash
+pyinstaller LunaLite.spec
+```
 
 ## Requirements
 

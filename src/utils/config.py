@@ -29,8 +29,14 @@ DEFAULT_CONFIG = {
     },
 }
 
-CONFIG_DIR = Path(os.environ.get("APPDATA", Path.home() / ".config")) / "LunaLite"
-CONFIG_FILE = CONFIG_DIR / "config.json"
+# User data dir — writable location for config/cache (works in PyInstaller bundle)
+# Windows: ~/AppData/Local/LunaLite  |  Linux/macOS: ~/.config/LunaLite
+USER_DATA_DIR = Path(
+    os.environ.get("LOCALAPPDATA", os.environ.get("APPDATA", Path.home() / ".config"))
+) / "LunaLite"
+USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+CONFIG_FILE = USER_DATA_DIR / "config.json"
 
 
 class ConfigManager:
@@ -50,7 +56,7 @@ class ConfigManager:
             self._config = dict(DEFAULT_CONFIG)
 
     def save(self):
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(self._config, f, indent=2, ensure_ascii=False)
 

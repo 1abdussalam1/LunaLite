@@ -2,17 +2,23 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from src.utils.paths import resource_path
 
-_LOCALES_DIR = Path(__file__).resolve().parent.parent.parent / "locales"
+
 _current_lang = "en"
 _strings: dict[str, str] = {}
 
 
+def _locales_dir() -> Path:
+    return Path(resource_path("locales"))
+
+
 def load_language(lang: str):
     global _current_lang, _strings
-    filepath = _LOCALES_DIR / f"{lang}.json"
+    locales = _locales_dir()
+    filepath = locales / f"{lang}.json"
     if not filepath.exists():
-        filepath = _LOCALES_DIR / "en.json"
+        filepath = locales / "en.json"
         lang = "en"
     try:
         with open(filepath, "r", encoding="utf-8") as f:

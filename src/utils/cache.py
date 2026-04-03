@@ -1,18 +1,16 @@
 import sqlite3
 import time
-import os
-from pathlib import Path
+
+from src.utils.config import USER_DATA_DIR
 
 
-CACHE_DIR = Path(os.environ.get("APPDATA", Path.home() / ".config")) / "LunaLite"
-CACHE_DB = CACHE_DIR / "cache.db"
+CACHE_DB = USER_DATA_DIR / "cache.db"
 MAX_ENTRIES = 1000
 EXPIRY_SECONDS = 86400  # 24 hours
 
 
 class TranslationCache:
     def __init__(self):
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(CACHE_DB), check_same_thread=False)
         self._create_table()
         self._cleanup()
