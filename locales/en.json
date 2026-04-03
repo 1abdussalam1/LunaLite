@@ -76,6 +76,11 @@
   "clear_context": "Clear Context",
   "clear_context_confirm": "Clear translation context? This will reset the conversation memory.",
   "context_indicator": "Context",
+  "game_executable": "Game Executable",
+  "browse": "Browse...",
+  "inject_hook": "Inject Hook",
+  "select_game_exe": "Select Game Executable",
+  "refresh_devices": "Refresh",
   "languages": {
     "auto": "Auto Detect",
     "ja": "Japanese",

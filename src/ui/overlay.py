@@ -107,6 +107,32 @@ class OverlayWindow(QWidget):
             }
         """)
 
+    def set_font_size(self, size: int):
+        font = self._text_label.font()
+        font.setPointSize(size)
+        self._text_label.setFont(font)
+        self._config["overlay"]["font_size"] = size
+
+    def set_font_color(self, color: str):
+        self._text_label.setStyleSheet(f"color: {color}; background: transparent;")
+        self._config["overlay"]["font_color"] = color
+
+    def set_bg_color(self, color: str, opacity: float = None):
+        self._config["overlay"]["bg_color"] = color
+        bg_opacity = opacity if opacity is not None else self._config.get("overlay", {}).get("bg_opacity", 0.8)
+        bg_r, bg_g, bg_b = self._hex_to_rgb(color)
+        bg_alpha = int(bg_opacity * 255)
+        self._container.setStyleSheet(f"""
+            #overlayContainer {{
+                background-color: rgba({bg_r}, {bg_g}, {bg_b}, {bg_alpha});
+                border-radius: 10px;
+            }}
+        """)
+
+    def set_opacity(self, opacity: float):
+        self.setWindowOpacity(opacity)
+        self._config["overlay"]["opacity"] = opacity
+
     def set_text(self, text: str):
         self._fade_anim.stop()
         self._fade_anim.setStartValue(0.0)

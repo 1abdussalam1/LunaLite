@@ -1,5 +1,17 @@
+import os
+import subprocess
+
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 from PyQt6.QtWidgets import QApplication
+
+
+def inject_hook(exe_path: str):
+    """Launch game and inject hook DLL (placeholder for now - shows instructions)"""
+    if not exe_path or not os.path.exists(exe_path):
+        raise ValueError("Invalid game executable path")
+    # For now: start the game process, hook injection requires LunaHook DLL
+    # This is a placeholder that starts the game
+    subprocess.Popen([exe_path], cwd=os.path.dirname(exe_path))
 
 
 class ClipboardMonitor(QObject):

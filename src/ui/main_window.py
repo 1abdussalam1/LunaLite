@@ -43,7 +43,7 @@ from PyQt6.QtWidgets import (
 )
 
 from src.utils.config import ConfigManager
-from src.utils.i18n import t, is_rtl, load_language
+from src.utils.i18n import t, is_rtl, load_language, on_language_changed
 from src.utils.cache import TranslationCache
 from src.core.gemini_client import GeminiClient, TranslateWorker, AudioTranslateWorker
 from src.core.audio_capture import AudioCapture
@@ -300,6 +300,9 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._load_language_combos()
 
+        # Connect language change signal for live retranslation
+        on_language_changed(self.retranslate_ui)
+
     def _setup_ui(self):
         central = QWidget(self)
         self.setCentralWidget(central)
@@ -533,6 +536,26 @@ class MainWindow(QMainWindow):
         self._source_lang_combo.blockSignals(False)
         self._target_lang_combo.blockSignals(False)
 
+    def retranslate_ui(self):
+        self.setWindowTitle(t("app_name", "LunaLite"))
+        self._settings_btn.setText(f"\u2699 {t('settings', 'Settings')}")
+        self._clear_context_btn.setToolTip(t("clear_context", "Clear Context"))
+        max_ctx = self.config.get("max_context", 10)
+        ctx_size = self.gemini_client.get_context_size()
+        self._context_label.setText(f"\U0001f4be {t('context_indicator', 'Context')}: {ctx_size}/{max_ctx}")
+        # Reload language combos with translated names
+        self._load_language_combos()
+        # Update tray menu
+        self._tray_show_action.setText(t("show_window", "Show/Hide Window"))
+        self._tray_startstop_action.setText(
+            t("stop", "Stop") if self._power_button.active else t("start", "Start")
+        )
+        # Update layout direction
+        if is_rtl():
+            self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        else:
+            self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+
     def _setup_tray(self):
         # Create a moon icon programmatically
         tray_pixmap = QPixmap(32, 32)
@@ -758,7 +781,11 @@ class MainWindow(QMainWindow):
         self._token_label.setText(f"Tokens: {input_tokens} in / {output_tokens} out")
 
     def _on_error(self, message: str):
-        self._status_label.setText(f"Error: {message[:60]}")
+        if "429" in str(message) or "quota" in str(message).lower():
+            display_msg = "API quota exceeded. Check your Gemini plan."
+        else:
+            display_msg = str(message)[:200]
+        self._status_label.setText(f"Error: {display_msg[:60]}")
         self._status_label.setStyleSheet(
             "color: #e94560; font-size: 13px; background: transparent;"
         )
@@ -781,7 +808,7 @@ class MainWindow(QMainWindow):
     # --- Settings ---
 
     def _open_settings(self):
-        dialog = SettingsWindow(self.config, self.gemini_client, parent=self)
+        dialog = SettingsWindow(self.config, self.gemini_client, overlay=self.overlay, parent=self)
         if dialog.exec():
             # Reload config
             self.config.load()

@@ -40,9 +40,10 @@ from PyQt6.QtWidgets import (
     QApplication,
     QTextEdit,
     QMessageBox,
+    QFileDialog,
 )
 
-from src.utils.i18n import t, is_rtl, load_language, available_languages
+from src.utils.i18n import t, is_rtl, load_language, available_languages, on_language_changed
 from src.core.gemini_client import GeminiClient, FetchModelsWorker, TestApiWorker
 
 
@@ -181,10 +182,11 @@ class SettingsWindow(QDialog):
     settings_saved = pyqtSignal()
     theme_changed = pyqtSignal(str)
 
-    def __init__(self, config_manager, gemini_client, parent=None):
+    def __init__(self, config_manager, gemini_client, overlay=None, parent=None):
         super().__init__(parent)
         self._config = config_manager
         self._gemini = gemini_client
+        self._overlay = overlay
 
         self._fetch_worker = None
         self._test_worker = None
@@ -372,7 +374,11 @@ class SettingsWindow(QDialog):
                 f"\u2705 {t('test_working', 'Working')} - {elapsed:.2f}s"
             )
         else:
-            self._test_result_label.setText(f"\u274c {t('test_error', 'Error')}: {message}")
+            if "429" in str(message) or "quota" in str(message).lower():
+                msg = "API quota exceeded. Please check your Gemini plan.\nhttps://ai.google.dev/gemini-api/docs/rate-limits"
+            else:
+                msg = str(message)[:200]
+            self._test_result_label.setText(f"\u274c {t('test_error', 'Error')}: {msg}")
 
         self._update_token_display()
         self._test_worker = None
@@ -445,6 +451,23 @@ class SettingsWindow(QDialog):
 
         self._clipboard_checkbox = QCheckBox(t("label_clipboard_monitor", "Enable Clipboard Monitoring"))
         layout.addWidget(self._clipboard_checkbox)
+
+        # Game executable path
+        exe_form = QFormLayout()
+        exe_layout = QHBoxLayout()
+        self._exe_path_edit = QLineEdit()
+        self._exe_path_edit.setPlaceholderText("C:\\Games\\MyGame\\game.exe")
+        exe_layout.addWidget(self._exe_path_edit, 1)
+        self._exe_browse_btn = QPushButton(t("browse", "Browse..."))
+        self._exe_browse_btn.clicked.connect(self._browse_exe)
+        exe_layout.addWidget(self._exe_browse_btn)
+        exe_form.addRow(QLabel(t("game_executable", "Game Executable:")), exe_layout)
+        layout.addLayout(exe_form)
+
+        self._inject_btn = QPushButton(t("inject_hook", "Inject Hook"))
+        self._inject_btn.setStyleSheet("background-color: #0f3460;")
+        self._inject_btn.clicked.connect(self._on_inject_hook)
+        layout.addWidget(self._inject_btn)
 
         separator2 = QFrame()
         separator2.setFrameShape(QFrame.Shape.HLine)
@@ -538,14 +561,10 @@ class SettingsWindow(QDialog):
 
     def _populate_audio_devices(self):
         try:
-            from src.core.audio_capture import AudioCapture
-            capture = AudioCapture()
-            devices = capture.list_loopback_devices()
-            for dev in devices:
-                label = dev["name"]
-                if dev.get("is_loopback"):
-                    label += " [Loopback]"
-                self._audio_device_combo.addItem(label, dev["index"])
+            from src.core.audio_capture import get_loopback_devices
+            devices = get_loopback_devices()
+            for name, index in devices:
+                self._audio_device_combo.addItem(name, index)
         except Exception:
             self._audio_device_combo.addItem(t("audio_unavailable", "Audio devices unavailable"), -1)
 
@@ -554,7 +573,29 @@ class SettingsWindow(QDialog):
             return
         is_text = button_id == 0
         self._clipboard_checkbox.setEnabled(is_text)
+        self._exe_path_edit.setEnabled(is_text)
+        self._exe_browse_btn.setEnabled(is_text)
+        self._inject_btn.setEnabled(is_text)
         self._audio_device_combo.setEnabled(not is_text)
+
+    def _browse_exe(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, t("select_game_exe", "Select Game Executable"), "", "Executable (*.exe)"
+        )
+        if path:
+            self._exe_path_edit.setText(path)
+            self._config.set("game_exe_path", path)
+
+    def _on_inject_hook(self):
+        exe_path = self._exe_path_edit.text().strip()
+        if not exe_path:
+            QMessageBox.warning(self, t("error", "Error"), t("select_game_exe", "Select Game Executable"))
+            return
+        try:
+            from src.core.text_extractor import inject_hook
+            inject_hook(exe_path)
+        except Exception as e:
+            QMessageBox.warning(self, t("error", "Error"), str(e))
 
     def _on_reset_prompt(self):
         self._system_prompt_edit.setPlainText(DEFAULT_SYSTEM_PROMPT)
@@ -693,8 +734,40 @@ class SettingsWindow(QDialog):
         else:
             self._dark_label.setStyleSheet(f"color: {TEXT_LIGHT};")
             self._light_label.setStyleSheet(f"color: {TEXT_LIGHT}; font-weight: bold;")
+        self.apply_theme(is_dark)
         theme_str = "dark" if is_dark else "light"
         self.theme_changed.emit(theme_str)
+
+    def apply_theme(self, is_dark):
+        if is_dark:
+            bg = "#171717"
+            panel = "#1e1e1e"
+            text = "#ffffff"
+            accent = "#0f3460"
+        else:
+            bg = "#f5f5f5"
+            panel = "#ffffff"
+            text = "#1a1a1a"
+            accent = "#1565c0"
+
+        app = QApplication.instance()
+        app.setStyleSheet(f"""
+            QWidget {{ background-color: {bg}; color: {text}; }}
+            QDialog, QMainWindow {{ background-color: {bg}; }}
+            QPushButton {{ background-color: {accent}; color: white; border-radius: 6px; padding: 6px 12px; }}
+            QLineEdit, QTextEdit, QComboBox {{ background-color: {panel}; color: {text}; border: 1px solid #333; border-radius: 4px; padding: 4px; }}
+            QTabWidget::pane {{ background-color: {panel}; border: 1px solid #333; }}
+            QTabBar::tab {{ background-color: {bg}; color: {text}; padding: 8px 16px; }}
+            QTabBar::tab:selected {{ background-color: {accent}; color: white; }}
+            QSlider::groove:horizontal {{ background: #333; height: 4px; border-radius: 2px; }}
+            QSlider::handle:horizontal {{ background: {accent}; width: 14px; height: 14px; border-radius: 7px; margin: -5px 0; }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+            QComboBox::down-arrow {{ border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid {text}; width: 0; height: 0; }}
+            QCheckBox {{ color: {text}; }}
+            QLabel {{ color: {text}; }}
+            QGroupBox {{ color: {text}; border: 1px solid #444; border-radius: 6px; margin-top: 8px; padding-top: 8px; }}
+        """)
+        self._config.set("theme", "dark" if is_dark else "light")
 
     def _pick_font_color(self):
         color = QColorDialog.getColor(QColor(self._font_color), self, t("title_font_color", "Select Font Color"))
@@ -703,6 +776,8 @@ class SettingsWindow(QDialog):
             self._font_color_label.setText(self._font_color)
             self._update_color_buttons()
             self._update_preview()
+            if self._overlay:
+                self._overlay.set_font_color(self._font_color)
 
     def _pick_bg_color(self):
         color = QColorDialog.getColor(QColor(self._bg_color), self, t("title_bg_color", "Select Background Color"))
@@ -711,6 +786,8 @@ class SettingsWindow(QDialog):
             self._bg_color_label.setText(self._bg_color)
             self._update_color_buttons()
             self._update_preview()
+            if self._overlay:
+                self._overlay.set_bg_color(self._bg_color)
 
     def _update_color_buttons(self):
         self._font_color_btn.setStyleSheet(
@@ -739,7 +816,6 @@ class SettingsWindow(QDialog):
         )
 
         overall_opacity = window_opacity_pct / 100.0
-        opacity_str = f"{overall_opacity:.2f}"
 
         self._preview_text.setStyleSheet(
             f"color: {self._font_color}; "
@@ -749,7 +825,14 @@ class SettingsWindow(QDialog):
             f"padding: 4px;"
         )
 
-        self._preview_frame.setWindowOpacity(overall_opacity) if hasattr(self._preview_frame, 'setWindowOpacity') else None
+        # Apply changes to overlay in real-time
+        if self._overlay:
+            self._overlay.set_font_size(font_size)
+            self._overlay.set_opacity(overall_opacity)
+            self._overlay.update_appearance(
+                font_family, font_size, self._font_color,
+                self._bg_color, bg_opacity_pct / 100.0, overall_opacity
+            )
 
     # -------------------------------------------------------------------------
     # Tab 4: About
@@ -887,7 +970,15 @@ class SettingsWindow(QDialog):
 
         is_text = self._text_mode_radio.isChecked()
         self._clipboard_checkbox.setEnabled(is_text)
+        self._exe_path_edit.setEnabled(is_text)
+        self._exe_browse_btn.setEnabled(is_text)
+        self._inject_btn.setEnabled(is_text)
         self._audio_device_combo.setEnabled(not is_text)
+
+        # Game exe path
+        game_exe = self._config.get("game_exe_path", "")
+        if game_exe:
+            self._exe_path_edit.setText(game_exe)
 
         # System prompt
         system_prompt = self._config.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
@@ -920,6 +1011,11 @@ class SettingsWindow(QDialog):
 
         audio_device_data = self._audio_device_combo.currentData()
         self._config.set("audio_device", audio_device_data if audio_device_data is not None else -1)
+
+        # Game exe path
+        exe_path = self._exe_path_edit.text().strip()
+        if exe_path:
+            self._config.set("game_exe_path", exe_path)
 
         selected_ui_lang = self._ui_lang_combo.currentData()
         self._config.set("ui_language", selected_ui_lang)
@@ -1025,7 +1121,21 @@ class SettingsWindow(QDialog):
 
             QComboBox::drop-down {{
                 border: none;
-                width: 24px;
+                width: 20px;
+            }}
+
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #ffffff;
+                width: 0;
+                height: 0;
+            }}
+
+            QComboBox::down-arrow:on {{
+                border-top: none;
+                border-bottom: 6px solid #ffffff;
             }}
 
             QComboBox QAbstractItemView {{
