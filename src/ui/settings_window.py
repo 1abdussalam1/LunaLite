@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
 
 from src.utils.i18n import t, is_rtl, load_language, available_languages, on_language_changed
 from src.core.ai_client import AIClient, FetchModelsWorker, TestApiWorker, PROVIDERS
-from src.main import apply_theme
+from src.utils.theme import apply_theme
 
 
 LANGUAGES = [
