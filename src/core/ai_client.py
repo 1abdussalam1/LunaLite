@@ -12,10 +12,21 @@ PROVIDERS = {
     "Google Gemini": {
         "api_base": "https://generativelanguage.googleapis.com/v1beta",
         "models_endpoint": "/models",
-        "models_filter": lambda m: "generateContent" in m.get("supportedGenerationMethods", []),
+        "models_filter": lambda m: (
+            "generateContent" in m.get("supportedGenerationMethods", [])
+            and "gemini" in m.get("name", "").lower()
+        ),
         "model_name_field": "name",
         "translate_fn": "gemini_translate",
         "key_placeholder": "AIza...",
+        "fallback_models": [
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+        ],
     },
     "ZhipuAI (GLM)": {
         "api_base": "https://open.bigmodel.cn/api/paas/v4",
@@ -23,14 +34,29 @@ PROVIDERS = {
         "translate_fn": "openai_translate",
         "key_placeholder": "your-zhipuai-key",
         "static_models": [
-            "glm-4-flash",
-            "glm-4-flashx",
-            "glm-4v-flash",
-            "glm-4",
-            "glm-4-plus",
-            "glm-4-long",
-            "glm-z1-flash",
+            # --- FREE MODELS ---
+            "glm-4.7-flash",       # Free - text, recommended default
+            "glm-4.5-flash",       # Free - text, fast
+            "glm-4.6v-flashx",     # Free - vision/OCR
+            # --- PAID TEXT MODELS ---
+            "glm-5",               # $1/1M input
+            "glm-5-turbo",         # $1.2/1M input
+            "glm-5-code",          # $1.2/1M input
+            "glm-4.7",             # $0.6/1M input
+            "glm-4.7-flashx",      # $0.07/1M input
+            "glm-4.6",             # $0.6/1M input
+            "glm-4.5",             # $0.6/1M input
+            "glm-4.5-x",           # $2.2/1M input
+            "glm-4.5-air",         # $0.2/1M input
+            "glm-4.5-airx",        # $1.1/1M input
+            "glm-4-32b-0414-128k", # $0.1/1M input
+            # --- PAID VISION MODELS ---
+            "glm-5v-turbo",        # $1.2/1M - vision
+            "glm-4.6v",            # $0.3/1M - vision
+            "glm-ocr",             # $0.03/1M - OCR specialized
+            "glm-4.6v-flashx",     # $0.004/1M - vision fast
         ],
+        "ocr_model": "glm-4.6v-flashx",
     },
 }
 
@@ -316,7 +342,7 @@ class AIClient(QObject):
                 base_url="https://open.bigmodel.cn/api/paas/v4",
             )
             response = client.chat.completions.create(
-                model="glm-4v-flash",
+                model="glm-4.6v-flashx",
                 messages=[{
                     "role": "user",
                     "content": [
@@ -367,9 +393,17 @@ class AIClient(QObject):
                 name = m.get("name", "").replace("models/", "")
                 display = m.get("displayName", name)
                 models.append({"id": name, "name": display})
+            # Sort newest first (higher version numbers first)
+            models.sort(key=lambda m: m["id"], reverse=True)
             self.models_fetched.emit(models)
             return models
         except Exception as e:
+            # Use fallback models if API fetch fails
+            fallback = config.get("fallback_models", [])
+            if fallback:
+                models = [{"id": m, "name": m} for m in fallback]
+                self.models_fetched.emit(models)
+                return models
             self.error_occurred.emit(str(e))
             return []
 

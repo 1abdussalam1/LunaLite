@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
     "ocr_enabled": False,
     "audio_device": -1,
     "ocr_interval": 2.0,
-    "ocr_model": "glm-4v-flash",
+    "ocr_model": "glm-4.6v-flashx",
     "ocr_provider": "",
     "ocr_api_key": "",
     "game_exe_path": "",

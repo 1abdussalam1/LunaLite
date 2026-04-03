@@ -10,7 +10,7 @@ from PyQt6.QtGui import (
     QPainterPath, QPen, QPixmap, QRadialGradient, QBrush,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QHBoxLayout, QLabel, QMainWindow, QMenu,
+    QApplication, QHBoxLayout, QLabel, QMainWindow, QMenu,
     QMessageBox, QPushButton, QSizePolicy, QSystemTrayIcon, QVBoxLayout,
     QWidget, QSpacerItem, QCheckBox,
 )
@@ -25,20 +25,6 @@ from src.core.ocr_capture import OCRCapture
 from src.ui.overlay import OverlayWindow
 from src.ui.settings_window import SettingsWindow
 
-
-LANGUAGES = [
-    ("Auto Detect", "auto"),
-    ("Japanese", "ja"),
-    ("Chinese", "zh"),
-    ("Korean", "ko"),
-    ("English", "en"),
-    ("Arabic", "ar"),
-    ("French", "fr"),
-    ("German", "de"),
-    ("Spanish", "es"),
-    ("Russian", "ru"),
-    ("Portuguese", "pt"),
-]
 
 COLOR_BG = "#171717"
 COLOR_PANEL = "#1e1e1e"
@@ -259,7 +245,7 @@ class MainWindow(QMainWindow):
 
         # Window setup
         self.setWindowTitle("Glossa")
-        self.setFixedSize(420, 620)
+        self.setFixedSize(420, 520)
         self.setWindowFlags(
             self.windowFlags() & ~Qt.WindowType.WindowMaximizeButtonHint
         )
@@ -268,7 +254,6 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_tray()
         self._connect_signals()
-        self._load_language_combos()
 
         on_language_changed(self.retranslate_ui)
 
@@ -314,24 +299,30 @@ class MainWindow(QMainWindow):
 
         # --- Source checkboxes ---
         source_container = QWidget()
+        source_container.setMinimumWidth(300)
         source_layout = QHBoxLayout(source_container)
-        source_layout.setContentsMargins(10, 0, 10, 0)
-        source_layout.setSpacing(12)
+        source_layout.setContentsMargins(20, 4, 20, 4)
+        source_layout.setSpacing(20)
         source_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        cb_style = "QCheckBox { color: #aaa; font-size: 12px; background: transparent; spacing: 6px; }"
 
         self._clipboard_cb = QCheckBox(t("clipboard_mode", "Clipboard"))
         self._clipboard_cb.setChecked(self.config.get("clipboard_enabled", True))
-        self._clipboard_cb.setStyleSheet("color: #aaa; font-size: 11px; background: transparent;")
+        self._clipboard_cb.setStyleSheet(cb_style)
+        self._clipboard_cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         source_layout.addWidget(self._clipboard_cb)
 
         self._ocr_cb = QCheckBox(t("ocr_mode", "OCR"))
         self._ocr_cb.setChecked(self.config.get("ocr_enabled", False))
-        self._ocr_cb.setStyleSheet("color: #aaa; font-size: 11px; background: transparent;")
+        self._ocr_cb.setStyleSheet(cb_style)
+        self._ocr_cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         source_layout.addWidget(self._ocr_cb)
 
         self._audio_cb = QCheckBox(t("audio_mode", "Audio"))
         self._audio_cb.setChecked(self.config.get("audio_enabled", False))
-        self._audio_cb.setStyleSheet("color: #aaa; font-size: 11px; background: transparent;")
+        self._audio_cb.setStyleSheet(cb_style)
+        self._audio_cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         source_layout.addWidget(self._audio_cb)
 
         main_layout.addWidget(source_container)
@@ -347,33 +338,6 @@ class MainWindow(QMainWindow):
         self._power_button = PowerButton()
         power_layout.addWidget(self._power_button)
         main_layout.addWidget(power_container)
-
-        main_layout.addSpacerItem(QSpacerItem(1, 8, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
-
-        # --- Language selectors ---
-        lang_container = QWidget()
-        lang_layout = QHBoxLayout(lang_container)
-        lang_layout.setContentsMargins(10, 0, 10, 0)
-        lang_layout.setSpacing(8)
-        lang_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self._source_lang_combo = QComboBox()
-        self._source_lang_combo.setMinimumWidth(130)
-        self._source_lang_combo.setFixedHeight(32)
-        lang_layout.addWidget(self._source_lang_combo)
-
-        arrow_label = QLabel("\u2192")
-        arrow_label.setStyleSheet("color: #ffffff; font-size: 18px; background: transparent;")
-        arrow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        arrow_label.setFixedWidth(24)
-        lang_layout.addWidget(arrow_label)
-
-        self._target_lang_combo = QComboBox()
-        self._target_lang_combo.setMinimumWidth(130)
-        self._target_lang_combo.setFixedHeight(32)
-        lang_layout.addWidget(self._target_lang_combo)
-
-        main_layout.addWidget(lang_container)
 
         main_layout.addSpacerItem(QSpacerItem(1, 8, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
 
@@ -459,28 +423,6 @@ class MainWindow(QMainWindow):
         self.config.set("ui_language", lang)
         load_language(lang)
 
-    def _load_language_combos(self):
-        self._source_lang_combo.blockSignals(True)
-        self._target_lang_combo.blockSignals(True)
-
-        self._source_lang_combo.clear()
-        self._target_lang_combo.clear()
-
-        for name, code in LANGUAGES:
-            self._source_lang_combo.addItem(name, code)
-            self._target_lang_combo.addItem(name, code)
-
-        source = self.config.get("source_lang", "auto")
-        target = self.config.get("target_lang", "ar")
-        for i, (_, code) in enumerate(LANGUAGES):
-            if code == source:
-                self._source_lang_combo.setCurrentIndex(i)
-            if code == target:
-                self._target_lang_combo.setCurrentIndex(i)
-
-        self._source_lang_combo.blockSignals(False)
-        self._target_lang_combo.blockSignals(False)
-
     def retranslate_ui(self, *args):
         self.setWindowTitle(t("app_name", "Glossa"))
         self._settings_btn.setText(f"\u2699 {t('settings', 'Settings')}")
@@ -491,7 +433,6 @@ class MainWindow(QMainWindow):
         self._clipboard_cb.setText(t("clipboard_mode", "Clipboard"))
         self._ocr_cb.setText(t("ocr_mode", "OCR"))
         self._audio_cb.setText(t("audio_mode", "Audio"))
-        self._load_language_combos()
         self._tray_show_action.setText(t("show_window", "Show/Hide Window"))
         self._tray_startstop_action.setText(
             t("stop", "Stop") if self._power_button.active else t("start", "Start")
@@ -558,8 +499,6 @@ class MainWindow(QMainWindow):
         self.ai_client.token_count_updated.connect(self._update_token_label)
         self.ai_client.error_occurred.connect(self._on_error)
         self.ai_client.context_changed.connect(self._update_context_label)
-        self._source_lang_combo.currentIndexChanged.connect(self._on_source_lang_changed)
-        self._target_lang_combo.currentIndexChanged.connect(self._on_target_lang_changed)
         self._settings_btn.clicked.connect(self._open_settings)
         self._clear_context_btn.clicked.connect(self._on_clear_context)
 
@@ -631,8 +570,8 @@ class MainWindow(QMainWindow):
         if not text.strip():
             return
 
-        source_lang = self._source_lang_combo.currentData() or "auto"
-        target_lang = self._target_lang_combo.currentData() or "ar"
+        source_lang = self.config.get("source_lang", "auto")
+        target_lang = self.config.get("target_lang", "ar")
 
         cached = self.cache.get(text, source_lang, target_lang)
         if cached:
@@ -657,8 +596,8 @@ class MainWindow(QMainWindow):
             self.overlay.set_rtl(is_rtl())
 
     def _on_audio_captured(self, wav_bytes: bytes):
-        source_lang = self._source_lang_combo.currentData() or "auto"
-        target_lang = self._target_lang_combo.currentData() or "ar"
+        source_lang = self.config.get("source_lang", "auto")
+        target_lang = self.config.get("target_lang", "ar")
 
         worker = AudioTranslateWorker(self.ai_client, wav_bytes, source_lang, target_lang)
         worker.finished.connect(self._on_audio_translated)
@@ -699,16 +638,6 @@ class MainWindow(QMainWindow):
         self._status_label.setStyleSheet("color: #e94560; font-size: 13px; background: transparent;")
         self._status_dot.setStyleSheet("background-color: #e94560; border-radius: 5px; border: none;")
 
-    def _on_source_lang_changed(self, index: int):
-        code = self._source_lang_combo.itemData(index)
-        if code is not None:
-            self.config.set("source_lang", code)
-
-    def _on_target_lang_changed(self, index: int):
-        code = self._target_lang_combo.itemData(index)
-        if code is not None:
-            self.config.set("target_lang", code)
-
     def _open_settings(self):
         dialog = SettingsWindow(self.config, self.ai_client, overlay=self.overlay, parent=self)
         if dialog.exec():
@@ -731,7 +660,6 @@ class MainWindow(QMainWindow):
 
             ui_lang = self.config.get("ui_language", "en")
             load_language(ui_lang)
-            self._load_language_combos()
 
             # Sync checkboxes
             self._clipboard_cb.setChecked(self.config.get("clipboard_enabled", True))
