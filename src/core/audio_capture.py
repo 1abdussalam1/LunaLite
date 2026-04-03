@@ -33,7 +33,14 @@ def get_loopback_devices():
 
 TARGET_RATE = 16000
 TARGET_CHANNELS = 1
-CHUNK_DURATION = 3  # seconds
+CHUNK_DURATION = 2  # reduced from 3 to 2 seconds for lower latency
+SILENCE_THRESHOLD = 0.01
+
+
+def is_silent(audio_data: bytes, threshold: float = SILENCE_THRESHOLD) -> bool:
+    """Check if audio chunk is silence."""
+    samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768
+    return np.abs(samples).mean() < threshold
 
 
 class AudioCapture(QObject):
@@ -166,7 +173,7 @@ class AudioCapture(QObject):
             )
 
             buffer = b""
-            bytes_per_chunk = chunk_size * channels * 2  # 16-bit = 2 bytes
+            bytes_per_chunk = chunk_size * channels * 2
 
             while self._running:
                 try:
@@ -175,6 +182,11 @@ class AudioCapture(QObject):
                     if len(buffer) >= bytes_per_chunk:
                         chunk = buffer[:bytes_per_chunk]
                         buffer = buffer[bytes_per_chunk:]
+
+                        # Skip silent chunks
+                        if is_silent(chunk):
+                            continue
+
                         wav_bytes = self._convert_to_target_format(chunk, channels, rate)
                         self.audio_chunk_ready.emit(wav_bytes)
                         if self._on_audio_chunk:

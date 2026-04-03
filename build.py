@@ -1,7 +1,7 @@
 """
-LunaLite Build Script
+Glossa Build Script
 Run on Windows: python build.py
-Output: dist/LunaLite/ folder ready to zip and share
+Output: dist/Glossa/ folder ready to zip and share
 """
 import subprocess, sys, os, shutil
 
@@ -12,7 +12,7 @@ def build():
         "--noconfirm",
         "--onedir",              # folder mode (faster startup than onefile)
         "--windowed",            # no console window
-        "--name", "LunaLite",
+        "--name", "Glossa",
         "--icon", "assets/icon.ico",
         # Include data folders
         "--add-data", "locales;locales",
@@ -26,6 +26,8 @@ def build():
         "--hidden-import", "google.generativeai",
         "--hidden-import", "google.auth",
         "--hidden-import", "google.auth.transport.requests",
+        # Hidden imports openai (for GLM)
+        "--hidden-import", "openai",
         # Other hidden imports
         "--hidden-import", "pyaudiowpatch",
         "--hidden-import", "numpy",
@@ -35,8 +37,8 @@ def build():
         "src/main.py",
     ]
     subprocess.run(cmd, check=True)
-    print("\nBuild complete! Output: dist/LunaLite/")
-    print("Zip dist/LunaLite/ and share!")
+    print("\nBuild complete! Output: dist/Glossa/")
+    print("Zip dist/Glossa/ and share!")
 
 
 if __name__ == "__main__":

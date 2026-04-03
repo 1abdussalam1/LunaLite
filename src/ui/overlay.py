@@ -35,7 +35,7 @@ class OverlayWindow(QWidget):
         inner_layout.setContentsMargins(12, 8, 12, 10)
         inner_layout.setSpacing(4)
 
-        self._branding = QLabel("\U0001f319 LunaLite")
+        self._branding = QLabel("\U0001f310 Glossa")
         self._branding.setObjectName("branding")
         self._branding.setFixedHeight(16)
         inner_layout.addWidget(self._branding)

@@ -1,6 +1,6 @@
 """
-Generate LunaLite icon files (ICO + PNG).
-Draws a dark circle with a crescent moon.
+Generate Glossa icon files (ICO + PNG).
+Draws a dark circle with a globe symbol.
 Requires: pip install Pillow
 """
 from PIL import Image, ImageDraw
@@ -18,17 +18,27 @@ def create_icon():
         # Dark circle background
         draw.ellipse([0, 0, size - 1, size - 1], fill=(23, 23, 23, 255))
 
-        # Moon crescent — bright disc
+        # Globe - outer circle
         cx, cy = size // 2, size // 2
         r = int(size * 0.35)
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(220, 220, 220, 255))
-
-        # Cut-out disc to form crescent shape
-        offset = int(size * 0.12)
         draw.ellipse(
-            [cx - r + offset, cy - r - offset, cx + r + offset, cy + r - offset],
-            fill=(23, 23, 23, 255),
+            [cx - r, cy - r, cx + r, cy + r],
+            outline=(74, 144, 217, 255),
+            width=max(1, size // 16),
         )
+
+        # Globe - vertical ellipse (meridian)
+        mr = int(r * 0.5)
+        draw.ellipse(
+            [cx - mr, cy - r, cx + mr, cy + r],
+            outline=(74, 144, 217, 255),
+            width=max(1, size // 16),
+        )
+
+        # Globe - horizontal line (equator)
+        lw = max(1, size // 16)
+        draw.line([cx - r, cy, cx + r, cy], fill=(74, 144, 217, 255), width=lw)
+
         images.append(img)
 
     os.makedirs("assets", exist_ok=True)

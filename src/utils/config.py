@@ -5,16 +5,25 @@ from typing import Any
 
 
 DEFAULT_CONFIG = {
+    "provider": "Google Gemini",
     "api_key": "",
     "model": "gemini-2.0-flash",
     "source_lang": "auto",
     "target_lang": "ar",
-    "translation_mode": "text",
     "theme": "dark",
     "ui_language": "en",
     "system_prompt": "You are a game translator. Translate the following {source_lang} text to {target_lang}. Return ONLY the translation, nothing else.",
     "context_memory": True,
     "max_context": 10,
+    "clipboard_enabled": True,
+    "audio_enabled": False,
+    "ocr_enabled": False,
+    "audio_device": -1,
+    "ocr_interval": 2.0,
+    "ocr_model": "glm-4v-flash",
+    "ocr_provider": "",
+    "ocr_api_key": "",
+    "game_exe_path": "",
     "overlay": {
         "x": 100,
         "y": 100,
@@ -30,10 +39,10 @@ DEFAULT_CONFIG = {
 }
 
 # User data dir — writable location for config/cache (works in PyInstaller bundle)
-# Windows: ~/AppData/Local/LunaLite  |  Linux/macOS: ~/.config/LunaLite
+# Windows: ~/AppData/Local/Glossa  |  Linux/macOS: ~/.config/Glossa
 USER_DATA_DIR = Path(
     os.environ.get("LOCALAPPDATA", os.environ.get("APPDATA", Path.home() / ".config"))
-) / "LunaLite"
+) / "Glossa"
 USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 CONFIG_FILE = USER_DATA_DIR / "config.json"

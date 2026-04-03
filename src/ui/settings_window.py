@@ -3,7 +3,6 @@ from PyQt6.QtCore import (
     QPropertyAnimation,
     QEasingCurve,
     QRectF,
-    QPointF,
     pyqtSignal,
     pyqtProperty,
     QSize,
@@ -15,7 +14,6 @@ from PyQt6.QtGui import (
     QPainter,
     QPen,
     QBrush,
-    QIcon,
 )
 from PyQt6.QtWidgets import (
     QDialog,
@@ -31,12 +29,9 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QSlider,
     QCheckBox,
-    QRadioButton,
-    QButtonGroup,
     QFrame,
     QColorDialog,
     QDialogButtonBox,
-    QSizePolicy,
     QApplication,
     QTextEdit,
     QMessageBox,
@@ -44,7 +39,8 @@ from PyQt6.QtWidgets import (
 )
 
 from src.utils.i18n import t, is_rtl, load_language, available_languages, on_language_changed
-from src.core.gemini_client import GeminiClient, FetchModelsWorker, TestApiWorker
+from src.core.ai_client import AIClient, FetchModelsWorker, TestApiWorker, PROVIDERS
+from src.main import apply_theme
 
 
 LANGUAGES = [
@@ -177,15 +173,15 @@ class DarkLightToggle(QWidget):
 
 
 class SettingsWindow(QDialog):
-    """LunaLite settings dialog with API, Translation, Appearance, and About tabs."""
+    """Glossa settings dialog with API, Translation, Appearance, and About tabs."""
 
     settings_saved = pyqtSignal()
     theme_changed = pyqtSignal(str)
 
-    def __init__(self, config_manager, gemini_client, overlay=None, parent=None):
+    def __init__(self, config_manager, ai_client, overlay=None, parent=None):
         super().__init__(parent)
         self._config = config_manager
-        self._gemini = gemini_client
+        self._ai = ai_client
         self._overlay = overlay
 
         self._fetch_worker = None
@@ -201,7 +197,7 @@ class SettingsWindow(QDialog):
         self._load_current_settings()
 
     def _setup_window(self):
-        self.setWindowTitle("LunaLite - Settings")
+        self.setWindowTitle(t("settings", "Settings") + " - Glossa")
         self.setMinimumSize(600, 500)
 
     def _apply_direction(self):
@@ -240,10 +236,18 @@ class SettingsWindow(QDialog):
         form = QFormLayout()
         form.setSpacing(8)
 
+        # Provider dropdown
+        self._provider_combo = QComboBox()
+        for name in PROVIDERS:
+            self._provider_combo.addItem(name)
+        self._provider_combo.currentTextChanged.connect(self._on_provider_changed)
+        form.addRow(QLabel(t("provider", "Provider:")), self._provider_combo)
+
+        # API key
         api_key_layout = QHBoxLayout()
         self._api_key_input = QLineEdit()
         self._api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self._api_key_input.setPlaceholderText(t("placeholder_api_key", "Enter your Gemini API key"))
+        self._api_key_input.setPlaceholderText(t("placeholder_api_key", "Enter your API key"))
         api_key_layout.addWidget(self._api_key_input, 1)
 
         self._toggle_key_btn = QPushButton(t("btn_show", "Show"))
@@ -253,6 +257,7 @@ class SettingsWindow(QDialog):
 
         form.addRow(QLabel(t("label_api_key", "API Key:")), api_key_layout)
 
+        # Model
         model_layout = QHBoxLayout()
         self._model_combo = QComboBox()
         self._model_combo.setMinimumWidth(250)
@@ -267,6 +272,7 @@ class SettingsWindow(QDialog):
 
         layout.addLayout(form)
 
+        # Test API
         test_layout = QHBoxLayout()
         self._test_api_btn = QPushButton(t("btn_test_api", "Test API Connection"))
         self._test_api_btn.clicked.connect(self._on_test_api)
@@ -282,6 +288,7 @@ class SettingsWindow(QDialog):
         separator.setStyleSheet(f"color: {DARK_ACCENT};")
         layout.addWidget(separator)
 
+        # Token usage
         self._token_usage_label = QLabel(t("label_token_usage", "Tokens used this session: 0 input / 0 output"))
         layout.addWidget(self._token_usage_label)
 
@@ -290,8 +297,38 @@ class SettingsWindow(QDialog):
 
         self._update_token_display()
 
+        # Second provider for OCR
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.HLine)
+        separator2.setStyleSheet(f"color: {DARK_ACCENT};")
+        layout.addWidget(separator2)
+
+        ocr_provider_label = QLabel(t("second_provider", "Second Provider (OCR):"))
+        ocr_provider_label.setStyleSheet(f"color: {DARK_HIGHLIGHT}; font-weight: bold;")
+        layout.addWidget(ocr_provider_label)
+
+        ocr_form = QFormLayout()
+
+        self._ocr_provider_combo = QComboBox()
+        self._ocr_provider_combo.addItem(t("same_as_main", "Same as Main"), "")
+        for name in PROVIDERS:
+            self._ocr_provider_combo.addItem(name, name)
+        ocr_form.addRow(QLabel(t("provider", "Provider:")), self._ocr_provider_combo)
+
+        self._ocr_api_key_input = QLineEdit()
+        self._ocr_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._ocr_api_key_input.setPlaceholderText(t("placeholder_api_key", "Enter your API key"))
+        ocr_form.addRow(QLabel(t("label_api_key", "API Key:")), self._ocr_api_key_input)
+
+        layout.addLayout(ocr_form)
+
         layout.addStretch(1)
         return tab
+
+    def _on_provider_changed(self, provider_name: str):
+        config = PROVIDERS.get(provider_name, {})
+        placeholder = config.get("key_placeholder", "")
+        self._api_key_input.setPlaceholderText(placeholder)
 
     def _toggle_api_key_visibility(self):
         if self._api_key_input.echoMode() == QLineEdit.EchoMode.Password:
@@ -307,11 +344,12 @@ class SettingsWindow(QDialog):
             self._test_result_label.setText(t("error_no_key", "Please enter an API key first."))
             return
 
-        self._gemini.api_key = api_key
+        self._ai.api_key = api_key
+        self._ai.provider = self._provider_combo.currentText()
         self._fetch_models_btn.setEnabled(False)
         self._fetch_models_btn.setText(t("btn_fetching", "Fetching..."))
 
-        self._fetch_worker = FetchModelsWorker(self._gemini)
+        self._fetch_worker = FetchModelsWorker(self._ai)
         self._fetch_worker.finished.connect(self._on_models_fetched)
         self._fetch_worker.error.connect(self._on_models_fetch_error)
         self._fetch_worker.start()
@@ -350,18 +388,19 @@ class SettingsWindow(QDialog):
             self._test_result_label.setText(t("error_no_key", "Please enter an API key first."))
             return
 
-        self._gemini.api_key = api_key
+        self._ai.api_key = api_key
+        self._ai.provider = self._provider_combo.currentText()
         model_data = self._model_combo.currentData()
         model_text = self._model_combo.currentText()
         selected_model = model_data if model_data else model_text
         if selected_model:
-            self._gemini.model = selected_model
+            self._ai.model = selected_model
 
         self._test_api_btn.setEnabled(False)
         self._test_api_btn.setText(t("btn_testing", "Testing..."))
         self._test_result_label.setText("")
 
-        self._test_worker = TestApiWorker(self._gemini)
+        self._test_worker = TestApiWorker(self._ai)
         self._test_worker.finished.connect(self._on_test_result)
         self._test_worker.start()
 
@@ -375,7 +414,7 @@ class SettingsWindow(QDialog):
             )
         else:
             if "429" in str(message) or "quota" in str(message).lower():
-                msg = "API quota exceeded. Please check your Gemini plan.\nhttps://ai.google.dev/gemini-api/docs/rate-limits"
+                msg = "API quota exceeded."
             else:
                 msg = str(message)[:200]
             self._test_result_label.setText(f"\u274c {t('test_error', 'Error')}: {msg}")
@@ -384,8 +423,8 @@ class SettingsWindow(QDialog):
         self._test_worker = None
 
     def _update_token_display(self):
-        inp = self._gemini.token_usage.total_input
-        out = self._gemini.token_usage.total_output
+        inp = self._ai.token_usage.total_input
+        out = self._ai.token_usage.total_output
         self._token_usage_label.setText(
             t("label_token_usage_fmt", "Tokens used this session: {inp} input / {out} output").format(
                 inp=inp, out=out
@@ -426,33 +465,60 @@ class SettingsWindow(QDialog):
 
         layout.addLayout(form)
 
-        mode_group_label = QLabel(t("label_translation_mode", "Translation Mode:"))
-        layout.addWidget(mode_group_label)
-
-        mode_layout = QHBoxLayout()
-        self._mode_group = QButtonGroup(self)
-        self._text_mode_radio = QRadioButton(t("mode_text", "Text (Hook/Clipboard)"))
-        self._audio_mode_radio = QRadioButton(t("mode_audio", "Audio (Loopback)"))
-        self._mode_group.addButton(self._text_mode_radio, 0)
-        self._mode_group.addButton(self._audio_mode_radio, 1)
-        mode_layout.addWidget(self._text_mode_radio)
-        mode_layout.addWidget(self._audio_mode_radio)
-        mode_layout.addStretch(1)
-        layout.addLayout(mode_layout)
-
+        # --- Source checkboxes ---
         separator1 = QFrame()
         separator1.setFrameShape(QFrame.Shape.HLine)
         separator1.setStyleSheet(f"color: {DARK_ACCENT};")
         layout.addWidget(separator1)
 
+        sources_label = QLabel(t("label_translation_mode", "Translation Sources:"))
+        sources_label.setStyleSheet(f"color: {DARK_HIGHLIGHT}; font-weight: bold;")
+        layout.addWidget(sources_label)
+
+        self._clipboard_checkbox = QCheckBox(t("clipboard_mode", "Clipboard"))
+        layout.addWidget(self._clipboard_checkbox)
+
+        self._ocr_checkbox = QCheckBox(t("ocr_mode", "OCR (Screen Capture)"))
+        layout.addWidget(self._ocr_checkbox)
+
+        # OCR sub-options
+        ocr_options = QWidget()
+        ocr_layout = QFormLayout(ocr_options)
+        ocr_layout.setContentsMargins(20, 0, 0, 0)
+
+        self._ocr_interval_spin = QSpinBox()
+        self._ocr_interval_spin.setRange(1, 10)
+        self._ocr_interval_spin.setValue(2)
+        self._ocr_interval_spin.setSuffix("s")
+        ocr_layout.addRow(QLabel(t("ocr_interval", "OCR Interval:")), self._ocr_interval_spin)
+
+        layout.addWidget(ocr_options)
+
+        self._audio_checkbox = QCheckBox(t("audio_mode", "Audio (Loopback)"))
+        layout.addWidget(self._audio_checkbox)
+
+        # Audio sub-options
+        audio_options = QWidget()
+        audio_layout = QFormLayout(audio_options)
+        audio_layout.setContentsMargins(20, 0, 0, 0)
+
+        self._audio_device_combo = QComboBox()
+        self._audio_device_combo.addItem(t("audio_default", "Default Loopback Device"), -1)
+        audio_layout.addRow(QLabel(t("label_audio_device", "Audio Device:")), self._audio_device_combo)
+
+        layout.addWidget(audio_options)
+        self._populate_audio_devices()
+
+        # Game executable path
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.Shape.HLine)
+        separator2.setStyleSheet(f"color: {DARK_ACCENT};")
+        layout.addWidget(separator2)
+
         text_options_label = QLabel(t("label_text_options", "Text Mode Options:"))
         text_options_label.setStyleSheet(f"color: {DARK_HIGHLIGHT}; font-weight: bold;")
         layout.addWidget(text_options_label)
 
-        self._clipboard_checkbox = QCheckBox(t("label_clipboard_monitor", "Enable Clipboard Monitoring"))
-        layout.addWidget(self._clipboard_checkbox)
-
-        # Game executable path
         exe_form = QFormLayout()
         exe_layout = QHBoxLayout()
         self._exe_path_edit = QLineEdit()
@@ -469,23 +535,7 @@ class SettingsWindow(QDialog):
         self._inject_btn.clicked.connect(self._on_inject_hook)
         layout.addWidget(self._inject_btn)
 
-        separator2 = QFrame()
-        separator2.setFrameShape(QFrame.Shape.HLine)
-        separator2.setStyleSheet(f"color: {DARK_ACCENT};")
-        layout.addWidget(separator2)
-
-        audio_options_label = QLabel(t("label_audio_options", "Audio Mode Options:"))
-        audio_options_label.setStyleSheet(f"color: {DARK_HIGHLIGHT}; font-weight: bold;")
-        layout.addWidget(audio_options_label)
-
-        audio_form = QFormLayout()
-        self._audio_device_combo = QComboBox()
-        self._audio_device_combo.addItem(t("audio_default", "Default Loopback Device"), -1)
-        audio_form.addRow(QLabel(t("label_audio_device", "Audio Device:")), self._audio_device_combo)
-        layout.addLayout(audio_form)
-
-        self._populate_audio_devices()
-
+        # UI language
         separator3 = QFrame()
         separator3.setFrameShape(QFrame.Shape.HLine)
         separator3.setStyleSheet(f"color: {DARK_ACCENT};")
@@ -498,9 +548,7 @@ class SettingsWindow(QDialog):
         ui_lang_form.addRow(QLabel(t("label_ui_language", "UI Language:")), self._ui_lang_combo)
         layout.addLayout(ui_lang_form)
 
-        self._mode_group.idToggled.connect(self._on_mode_toggled)
-
-        # --- System Prompt ---
+        # System Prompt
         separator4 = QFrame()
         separator4.setFrameShape(QFrame.Shape.HLine)
         separator4.setStyleSheet(f"color: {DARK_ACCENT};")
@@ -523,10 +571,10 @@ class SettingsWindow(QDialog):
         layout.addLayout(prompt_btn_layout)
 
         prompt_hint = QLabel(t("prompt_hint", "Variables: {source_lang}, {target_lang}, {context}"))
-        prompt_hint.setStyleSheet(f"color: #888888; font-size: 11px;")
+        prompt_hint.setStyleSheet("color: #888888; font-size: 11px;")
         layout.addWidget(prompt_hint)
 
-        # --- Context Memory Settings ---
+        # Context Memory
         separator5 = QFrame()
         separator5.setFrameShape(QFrame.Shape.HLine)
         separator5.setStyleSheet(f"color: {DARK_ACCENT};")
@@ -568,16 +616,6 @@ class SettingsWindow(QDialog):
         except Exception:
             self._audio_device_combo.addItem(t("audio_unavailable", "Audio devices unavailable"), -1)
 
-    def _on_mode_toggled(self, button_id: int, checked: bool):
-        if not checked:
-            return
-        is_text = button_id == 0
-        self._clipboard_checkbox.setEnabled(is_text)
-        self._exe_path_edit.setEnabled(is_text)
-        self._exe_browse_btn.setEnabled(is_text)
-        self._inject_btn.setEnabled(is_text)
-        self._audio_device_combo.setEnabled(not is_text)
-
     def _browse_exe(self):
         path, _ = QFileDialog.getOpenFileName(
             self, t("select_game_exe", "Select Game Executable"), "", "Executable (*.exe)"
@@ -612,7 +650,7 @@ class SettingsWindow(QDialog):
             QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self._gemini.clear_context()
+            self._ai.clear_context()
 
     # -------------------------------------------------------------------------
     # Tab 3: Appearance
@@ -685,7 +723,7 @@ class SettingsWindow(QDialog):
         bg_opacity_layout = QHBoxLayout()
         bg_opacity_layout.addWidget(self._bg_opacity_slider, 1)
         bg_opacity_layout.addWidget(self._bg_opacity_value_label)
-        form.addRow(QLabel(t("label_bg_opacity", "Background Opacity:")), bg_opacity_layout)
+        form.addRow(QLabel(t("bg_opacity", "Background Opacity:")), bg_opacity_layout)
 
         self._window_opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._window_opacity_slider.setRange(10, 100)
@@ -710,7 +748,7 @@ class SettingsWindow(QDialog):
         preview_inner_layout.setContentsMargins(12, 8, 12, 10)
         preview_inner_layout.setSpacing(4)
 
-        self._preview_branding = QLabel("\U0001f319 LunaLite")
+        self._preview_branding = QLabel("\U0001f310 Glossa")
         self._preview_branding.setStyleSheet("color: rgba(255,255,255,0.4); font-size: 9px; background: transparent;")
         self._preview_branding.setFixedHeight(16)
         preview_inner_layout.addWidget(self._preview_branding)
@@ -734,40 +772,10 @@ class SettingsWindow(QDialog):
         else:
             self._dark_label.setStyleSheet(f"color: {TEXT_LIGHT};")
             self._light_label.setStyleSheet(f"color: {TEXT_LIGHT}; font-weight: bold;")
-        self.apply_theme(is_dark)
+        apply_theme(is_dark)
         theme_str = "dark" if is_dark else "light"
+        self._config.set("theme", theme_str)
         self.theme_changed.emit(theme_str)
-
-    def apply_theme(self, is_dark):
-        if is_dark:
-            bg = "#171717"
-            panel = "#1e1e1e"
-            text = "#ffffff"
-            accent = "#0f3460"
-        else:
-            bg = "#f5f5f5"
-            panel = "#ffffff"
-            text = "#1a1a1a"
-            accent = "#1565c0"
-
-        app = QApplication.instance()
-        app.setStyleSheet(f"""
-            QWidget {{ background-color: {bg}; color: {text}; }}
-            QDialog, QMainWindow {{ background-color: {bg}; }}
-            QPushButton {{ background-color: {accent}; color: white; border-radius: 6px; padding: 6px 12px; }}
-            QLineEdit, QTextEdit, QComboBox {{ background-color: {panel}; color: {text}; border: 1px solid #333; border-radius: 4px; padding: 4px; }}
-            QTabWidget::pane {{ background-color: {panel}; border: 1px solid #333; }}
-            QTabBar::tab {{ background-color: {bg}; color: {text}; padding: 8px 16px; }}
-            QTabBar::tab:selected {{ background-color: {accent}; color: white; }}
-            QSlider::groove:horizontal {{ background: #333; height: 4px; border-radius: 2px; }}
-            QSlider::handle:horizontal {{ background: {accent}; width: 14px; height: 14px; border-radius: 7px; margin: -5px 0; }}
-            QComboBox::drop-down {{ border: none; width: 20px; }}
-            QComboBox::down-arrow {{ border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid {text}; width: 0; height: 0; }}
-            QCheckBox {{ color: {text}; }}
-            QLabel {{ color: {text}; }}
-            QGroupBox {{ color: {text}; border: 1px solid #444; border-radius: 6px; margin-top: 8px; padding-top: 8px; }}
-        """)
-        self._config.set("theme", "dark" if is_dark else "light")
 
     def _pick_font_color(self):
         color = QColorDialog.getColor(QColor(self._font_color), self, t("title_font_color", "Select Font Color"))
@@ -815,8 +823,6 @@ class SettingsWindow(QDialog):
             f"border-radius: 10px;"
         )
 
-        overall_opacity = window_opacity_pct / 100.0
-
         self._preview_text.setStyleSheet(
             f"color: {self._font_color}; "
             f"font-family: '{font_family}'; "
@@ -825,8 +831,8 @@ class SettingsWindow(QDialog):
             f"padding: 4px;"
         )
 
-        # Apply changes to overlay in real-time
         if self._overlay:
+            overall_opacity = window_opacity_pct / 100.0
             self._overlay.set_font_size(font_size)
             self._overlay.set_opacity(overall_opacity)
             self._overlay.update_appearance(
@@ -843,7 +849,7 @@ class SettingsWindow(QDialog):
         layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        title = QLabel("LunaLite")
+        title = QLabel("Glossa")
         title_font = QFont()
         title_font.setPointSize(28)
         title_font.setBold(True)
@@ -859,20 +865,18 @@ class SettingsWindow(QDialog):
 
         layout.addSpacing(10)
 
-        desc_en = QLabel(
-            "LunaLite is a real-time game translation tool powered by Google Gemini AI."
-        )
+        desc_en = QLabel(t("about_desc", "Glossa is a real-time game translation tool powered by AI."))
         desc_en.setWordWrap(True)
         desc_en.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 13px;")
         desc_en.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(desc_en)
 
         desc_ar = QLabel(
-            "\u0644\u0648\u0646\u0627 \u0644\u0627\u064a\u062a \u0647\u064a "
+            "\u063a\u0644\u0648\u0633\u0627 \u0647\u064a "
             "\u0623\u062f\u0627\u0629 \u062a\u0631\u062c\u0645\u0629 "
             "\u0623\u0644\u0639\u0627\u0628 \u0641\u0648\u0631\u064a\u0629 "
-            "\u0645\u062f\u0639\u0648\u0645\u0629 \u0628\u062a\u0642\u0646\u064a\u0629 "
-            "Google Gemini AI."
+            "\u0645\u062f\u0639\u0648\u0645\u0629 \u0628\u0627\u0644\u0630\u0643\u0627\u0621 "
+            "\u0627\u0644\u0627\u0635\u0637\u0646\u0627\u0639\u064a."
         )
         desc_ar.setWordWrap(True)
         desc_ar.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 13px;")
@@ -883,7 +887,7 @@ class SettingsWindow(QDialog):
         layout.addSpacing(10)
 
         github_label = QLabel(
-            f'<a href="https://github.com/LunaLite" style="color: {DARK_HIGHLIGHT};">'
+            f'<a href="https://github.com/1abdussalam1/LunaLite" style="color: {DARK_HIGHLIGHT};">'
             f'{t("label_github", "GitHub Repository")}</a>'
         )
         github_label.setOpenExternalLinks(True)
@@ -898,6 +902,12 @@ class SettingsWindow(QDialog):
     # Load / Save
     # -------------------------------------------------------------------------
     def _load_current_settings(self):
+        # Provider
+        provider = self._config.get("provider", "Google Gemini")
+        idx = self._provider_combo.findText(provider)
+        if idx >= 0:
+            self._provider_combo.setCurrentIndex(idx)
+
         self._api_key_input.setText(self._config.get("api_key", ""))
 
         model = self._config.get("model", "gemini-2.0-flash")
@@ -917,25 +927,34 @@ class SettingsWindow(QDialog):
         if idx >= 0:
             self._target_lang_combo.setCurrentIndex(idx)
 
-        mode = self._config.get("translation_mode", "text")
-        if mode == "audio":
-            self._audio_mode_radio.setChecked(True)
-        else:
-            self._text_mode_radio.setChecked(True)
+        # Source checkboxes
+        self._clipboard_checkbox.setChecked(self._config.get("clipboard_enabled", True))
+        self._ocr_checkbox.setChecked(self._config.get("ocr_enabled", False))
+        self._audio_checkbox.setChecked(self._config.get("audio_enabled", False))
 
-        clipboard = self._config.get("clipboard_monitoring", True)
-        self._clipboard_checkbox.setChecked(clipboard)
+        # OCR interval
+        self._ocr_interval_spin.setValue(int(self._config.get("ocr_interval", 2)))
 
+        # Audio device
         audio_device = self._config.get("audio_device", -1)
         idx = self._audio_device_combo.findData(audio_device)
         if idx >= 0:
             self._audio_device_combo.setCurrentIndex(idx)
 
+        # OCR provider
+        ocr_provider = self._config.get("ocr_provider", "")
+        idx = self._ocr_provider_combo.findData(ocr_provider)
+        if idx >= 0:
+            self._ocr_provider_combo.setCurrentIndex(idx)
+        self._ocr_api_key_input.setText(self._config.get("ocr_api_key", ""))
+
+        # UI language
         ui_lang = self._config.get("ui_language", "en")
         idx = self._ui_lang_combo.findData(ui_lang)
         if idx >= 0:
             self._ui_lang_combo.setCurrentIndex(idx)
 
+        # Theme
         theme = self._config.get("theme", "dark")
         self._theme_toggle.set_dark(theme == "dark", animate=False)
         if theme == "dark":
@@ -945,6 +964,7 @@ class SettingsWindow(QDialog):
             self._dark_label.setStyleSheet(f"color: {TEXT_LIGHT};")
             self._light_label.setStyleSheet(f"color: {TEXT_LIGHT}; font-weight: bold;")
 
+        # Overlay appearance
         font_family = self._config.get("overlay.font_family", "Segoe UI")
         idx = self._font_family_combo.findText(font_family, Qt.MatchFlag.MatchExactly)
         if idx >= 0:
@@ -968,13 +988,6 @@ class SettingsWindow(QDialog):
         self._update_color_buttons()
         self._update_preview()
 
-        is_text = self._text_mode_radio.isChecked()
-        self._clipboard_checkbox.setEnabled(is_text)
-        self._exe_path_edit.setEnabled(is_text)
-        self._exe_browse_btn.setEnabled(is_text)
-        self._inject_btn.setEnabled(is_text)
-        self._audio_device_combo.setEnabled(not is_text)
-
         # Game exe path
         game_exe = self._config.get("game_exe_path", "")
         if game_exe:
@@ -993,6 +1006,8 @@ class SettingsWindow(QDialog):
         self._context_size_value_label.setText(str(max_context))
 
     def _on_save(self):
+        # Provider
+        self._config.set("provider", self._provider_combo.currentText())
         self._config.set("api_key", self._api_key_input.text().strip())
 
         model_data = self._model_combo.currentData()
@@ -1002,28 +1017,38 @@ class SettingsWindow(QDialog):
         self._config.set("source_lang", self._source_lang_combo.currentData())
         self._config.set("target_lang", self._target_lang_combo.currentData())
 
-        if self._audio_mode_radio.isChecked():
-            self._config.set("translation_mode", "audio")
-        else:
-            self._config.set("translation_mode", "text")
+        # Source checkboxes
+        self._config.set("clipboard_enabled", self._clipboard_checkbox.isChecked())
+        self._config.set("ocr_enabled", self._ocr_checkbox.isChecked())
+        self._config.set("audio_enabled", self._audio_checkbox.isChecked())
 
-        self._config.set("clipboard_monitoring", self._clipboard_checkbox.isChecked())
+        # OCR interval
+        self._config.set("ocr_interval", self._ocr_interval_spin.value())
 
+        # Audio device
         audio_device_data = self._audio_device_combo.currentData()
         self._config.set("audio_device", audio_device_data if audio_device_data is not None else -1)
+
+        # OCR provider
+        ocr_provider = self._ocr_provider_combo.currentData() or ""
+        self._config.set("ocr_provider", ocr_provider)
+        self._config.set("ocr_api_key", self._ocr_api_key_input.text().strip())
 
         # Game exe path
         exe_path = self._exe_path_edit.text().strip()
         if exe_path:
             self._config.set("game_exe_path", exe_path)
 
+        # UI language
         selected_ui_lang = self._ui_lang_combo.currentData()
         self._config.set("ui_language", selected_ui_lang)
         load_language(selected_ui_lang)
 
+        # Theme
         theme = "dark" if self._theme_toggle.is_dark else "light"
         self._config.set("theme", theme)
 
+        # Overlay appearance
         self._config.set("overlay.font_family", self._font_family_combo.currentText())
         self._config.set("overlay.font_size", self._font_size_spin.value())
         self._config.set("overlay.font_color", self._font_color)
@@ -1036,17 +1061,23 @@ class SettingsWindow(QDialog):
         self._config.set("context_memory", self._context_memory_checkbox.isChecked())
         self._config.set("max_context", self._context_size_slider.value())
 
+        # Apply to AI client
         api_key = self._api_key_input.text().strip()
         if api_key:
-            self._gemini.api_key = api_key
+            self._ai.api_key = api_key
+        self._ai.provider = self._provider_combo.currentText()
         model_val = self._model_combo.currentData() or self._model_combo.currentText()
         if model_val:
-            self._gemini.model = model_val
+            self._ai.model = model_val
+        self._ai.system_prompt = self._system_prompt_edit.toPlainText()
+        self._ai.context_enabled = self._context_memory_checkbox.isChecked()
+        self._ai.set_max_context(self._context_size_slider.value())
 
-        # Apply context settings to gemini client
-        self._gemini.system_prompt = self._system_prompt_edit.toPlainText()
-        self._gemini.context_enabled = self._context_memory_checkbox.isChecked()
-        self._gemini.set_max_context(self._context_size_slider.value())
+        # OCR provider
+        if ocr_provider:
+            self._ai.set_ocr_provider(ocr_provider, self._ocr_api_key_input.text().strip())
+        else:
+            self._ai.set_ocr_provider(None, None)
 
         self.settings_saved.emit()
         self.accept()
@@ -1225,25 +1256,6 @@ class SettingsWindow(QDialog):
             }}
 
             QCheckBox::indicator:checked {{
-                background-color: {DARK_HIGHLIGHT};
-                border-color: {DARK_HIGHLIGHT};
-            }}
-
-            QRadioButton {{
-                color: {TEXT_COLOR};
-                font-size: 13px;
-                spacing: 8px;
-            }}
-
-            QRadioButton::indicator {{
-                width: 16px;
-                height: 16px;
-                border: 1px solid {DARK_ACCENT};
-                border-radius: 8px;
-                background-color: {DARK_BG};
-            }}
-
-            QRadioButton::indicator:checked {{
                 background-color: {DARK_HIGHLIGHT};
                 border-color: {DARK_HIGHLIGHT};
             }}

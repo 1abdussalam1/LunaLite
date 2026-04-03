@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-LunaLite PyInstaller spec file — reproducible builds.
+Glossa PyInstaller spec file -- reproducible builds.
 Usage: pyinstaller LunaLite.spec
 """
 
@@ -24,6 +24,7 @@ a = Analysis(
         "google.generativeai",
         "google.auth",
         "google.auth.transport.requests",
+        "openai",
         "pyaudiowpatch",
         "numpy",
         "scipy",
@@ -60,7 +61,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="LunaLite",
+    name="Glossa",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -78,5 +79,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="LunaLite",
+    name="Glossa",
 )

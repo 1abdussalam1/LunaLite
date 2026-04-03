@@ -1,4 +1,4 @@
-name: Build LunaLite
+name: Build Glossa
 
 on:
   push:
@@ -38,26 +38,26 @@ jobs:
       - name: Zip output
         run: |
           cd dist
-          Compress-Archive -Path LunaLite -DestinationPath LunaLite-windows-x64.zip
+          Compress-Archive -Path Glossa -DestinationPath Glossa-windows-x64.zip
 
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/LunaLite-windows-x64.zip
-          name: LunaLite ${{ github.ref_name }}
+          files: dist/Glossa-windows-x64.zip
+          name: Glossa ${{ github.ref_name }}
           body: |
-            ## 🌙 LunaLite ${{ github.ref_name }}
-            
-            ### تحميل / Download
-            ⬇️ **LunaLite-windows-x64.zip** 
-            
-            ### تشغيل / Run
-            1. فك الضغط
-            2. شغّل `LunaLite.exe`
-            3. أدخل Gemini API Key وانطلق! 🚀
-            
-            ### متطلبات / Requirements
+            ## Glossa ${{ github.ref_name }}
+
+            ### Download
+            **Glossa-windows-x64.zip**
+
+            ### Run
+            1. Extract the zip
+            2. Run `Glossa.exe`
+            3. Enter your API Key and go!
+
+            ### Requirements
             - Windows 10/11 (64-bit)
-            - لا يحتاج Python أو أي مكتبات ✅
+            - No Python or libraries needed
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
