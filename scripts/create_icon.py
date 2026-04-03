@@ -44,7 +44,7 @@ def create_icon():
     # Save 256x256 PNG
     images[-1].save("assets/icon.png", format="PNG")
 
-    print("\u2705 Icon created: assets/icon.ico + assets/icon.png")
+    print("Icon created: assets/icon.ico + assets/icon.png")
 
 
 if __name__ == "__main__":

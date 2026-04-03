@@ -35,7 +35,7 @@ def build():
         "src/main.py",
     ]
     subprocess.run(cmd, check=True)
-    print("\n\u2705 Build complete! Output: dist/LunaLite/")
+    print("\nBuild complete! Output: dist/LunaLite/")
     print("Zip dist/LunaLite/ and share!")
 
 
