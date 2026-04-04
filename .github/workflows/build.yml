@@ -39,23 +39,31 @@ jobs:
 
       - name: Download Textractor (bundle inside Glossa)
         run: |
-          $url = "https://github.com/Artikash/Textractor/releases/download/v5.2.0/Textractor-5.2.0-Setup.zip"
+          $url = "https://github.com/Artikash/Textractor/releases/download/v5.2.0/Textractor-5.2.0-Zip-Version-English-Only.zip"
           Invoke-WebRequest -Uri $url -OutFile textractor.zip
           Expand-Archive textractor.zip -DestinationPath dist\Glossa\Textractor
           Remove-Item textractor.zip
 
       - name: Download Tesseract (bundle inside Glossa)
         run: |
+          $installDir = "$env:USERPROFILE\tesseract_install"
+          $destDir = "$PWD\dist\Glossa\Tesseract-OCR"
           $url = "https://github.com/UB-Mannheim/tesseract/releases/download/v5.4.0.20240606/tesseract-ocr-w64-setup-5.4.0.20240606.exe"
           Invoke-WebRequest -Uri $url -OutFile tesseract_setup.exe
-          Start-Process -FilePath tesseract_setup.exe -ArgumentList "/S /D=$PWD\dist\Glossa\Tesseract-OCR" -Wait
+          Start-Process -FilePath tesseract_setup.exe -ArgumentList "/S" -Wait
+          $defaultInstall = "C:\Program Files\Tesseract-OCR"
+          if (Test-Path $defaultInstall) {
+            Copy-Item -Path $defaultInstall -Destination $destDir -Recurse -Force
+          }
           Remove-Item tesseract_setup.exe
 
       - name: Download Tesseract language packs (JPN, CHI, KOR)
         run: |
           $tessdata = "dist\Glossa\Tesseract-OCR\tessdata"
+          New-Item -ItemType Directory -Force -Path $tessdata | Out-Null
           $base = "https://github.com/tesseract-ocr/tessdata/raw/main"
           foreach ($lang in @("jpn", "chi_sim", "kor", "eng")) {
+            Write-Host "Downloading $lang.traineddata..."
             Invoke-WebRequest -Uri "$base/$lang.traineddata" -OutFile "$tessdata\$lang.traineddata"
           }
 
