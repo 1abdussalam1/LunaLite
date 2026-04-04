@@ -207,6 +207,9 @@ class PowerButton(QWidget):
 
 
 class MainWindow(QMainWindow):
+    # Thread-safe signal for OCR text
+    _ocr_text_signal = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
 
@@ -521,6 +524,8 @@ class MainWindow(QMainWindow):
         self.ai_client.context_changed.connect(self._update_context_label)
         self._settings_btn.clicked.connect(self._open_settings)
         self._clear_context_btn.clicked.connect(self._on_clear_context)
+        # Thread-safe OCR signal
+        self._ocr_text_signal.connect(self._on_ocr_text_main_thread)
 
     def _set_status(self, state: str):
         if state == "running":
@@ -652,13 +657,18 @@ class MainWindow(QMainWindow):
             self.overlay.set_rtl(is_rtl())
 
     def _on_hook_text(self, text: str):
-        """Called when text arrives from Named Pipe (Textractor)."""
-        self._on_text_captured(text)
+        """Called from Hook thread - emit signal for thread-safe UI update"""
+        if text and len(text.strip()) > 2:
+            self._ocr_text_signal.emit(text.strip())
 
     def _on_ocr_text(self, text: str):
-        """Called from OCR capture thread when text is detected."""
+        """Called from OCR capture thread - emit signal for thread-safe UI update"""
         if text and len(text.strip()) > 2:
-            self._on_text_captured(text.strip())
+            self._ocr_text_signal.emit(text.strip())
+
+    def _on_ocr_text_main_thread(self, text: str):
+        """Called in main thread - safe to update UI"""
+        self._on_text_captured(text)
 
     def _on_select_ocr_region(self):
         """Open the region selector overlay."""
