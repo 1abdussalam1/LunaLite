@@ -126,6 +126,7 @@ class OCRCapture:
             return
         self.region = region
         self.running = True
+        self._busy = False  # prevents overlapping requests
         threading.Thread(target=self._loop, daemon=True).start()
 
     def stop(self):
@@ -137,29 +138,32 @@ class OCRCapture:
 
     def _loop(self):
         while self.running:
-            try:
-                img_bytes = grab_screenshot(self.region)
+            # Skip if previous request still running
+            if not getattr(self, '_busy', False):
+                self._busy = True
+                try:
+                    img_bytes = grab_screenshot(self.region)
 
-                # Try GlossaAPI /translate/image (Gemma4 vision → extract + translate)
-                text = self._ocr_via_glossaapi(img_bytes)
+                    text = self._ocr_via_glossaapi(img_bytes)
 
-                # If GlossaAPI handled it, skip (callback already called)
-                if text == "__ALREADY_TRANSLATED__":
-                    continue
+                    if text == "__ALREADY_TRANSLATED__":
+                        self._busy = False
+                        time.sleep(self.interval)
+                        continue
 
-                # Fallback: local Tesseract → then translate via normal flow
-                if not text:
-                    text = ocr_with_tesseract(img_bytes, self.ocr_lang)
+                    if not text:
+                        text = ocr_with_tesseract(img_bytes, self.ocr_lang)
 
-                # Last fallback: AI vision via ai_client
-                if not text and hasattr(self, "ai_client") and self.ai_client:
-                    text = self.ai_client.ocr_screenshot(img_bytes)
+                    if not text and hasattr(self, "ai_client") and self.ai_client:
+                        text = self.ai_client.ocr_screenshot(img_bytes)
 
-                if text and text.strip() != self.last_text and len(text.strip()) > 1:
-                    self.last_text = text.strip()
-                    self.on_text_callback(text.strip())
-            except Exception as e:
-                print(f"OCR capture error: {e}")
+                    if text and text.strip() != self.last_text and len(text.strip()) > 1:
+                        self.last_text = text.strip()
+                        self.on_text_callback(text.strip())
+                except Exception as e:
+                    print(f"OCR capture error: {e}")
+                finally:
+                    self._busy = False
             time.sleep(self.interval)
 
     def _ocr_via_glossaapi(self, image_bytes: bytes) -> str:
