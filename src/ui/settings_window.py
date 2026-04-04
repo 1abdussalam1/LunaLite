@@ -572,7 +572,7 @@ class SettingsWindow(QDialog):
 
         hook_instructions = QLabel(
             "Hook mode uses Named Pipe to receive text from Textractor.\n"
-            "1. Install Textractor from the link below\n"
+            "1. Click 'Open Textractor' below — it's already included!\n"
             "2. Add Extension: NamedPipeOutput.xdll (pipe name: Glossa)\n"
             "3. Open game with Textractor, attach process\n"
             "4. Glossa will auto-receive the text"
@@ -581,7 +581,7 @@ class SettingsWindow(QDialog):
         hook_instructions.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 11px; padding: 4px 0;")
         layout.addWidget(hook_instructions)
 
-        self._download_textractor_btn = QPushButton(t("download_textractor", "Download Textractor"))
+        self._download_textractor_btn = QPushButton(t("open_textractor", "Open Textractor"))
         self._download_textractor_btn.setStyleSheet(f"background-color: {DARK_ACCENT};")
         self._download_textractor_btn.clicked.connect(self._open_textractor_url)
         layout.addWidget(self._download_textractor_btn)
@@ -716,8 +716,15 @@ class SettingsWindow(QDialog):
             self._config.set("game_exe_path", path)
 
     def _open_textractor_url(self):
-        import webbrowser
-        webbrowser.open("https://github.com/Artikash/Textractor/releases")
+        from src.core.text_hook import launch_textractor, get_textractor_path
+        import webbrowser, os
+        # Try to launch bundled Textractor first
+        path = get_textractor_path()
+        if path:
+            launch_textractor()
+        else:
+            # Fallback: open download page
+            webbrowser.open("https://github.com/Artikash/Textractor/releases")
 
     def _on_inject_hook(self):
         exe_path = self._exe_path_edit.text().strip()
