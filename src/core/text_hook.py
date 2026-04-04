@@ -108,3 +108,49 @@ class TextHookPipe:
 
         except Exception as e:
             print(f"[TextHook] Error: {e}")
+
+
+def launch_textractor() -> bool:
+    """Launch bundled Textractor automatically"""
+    import os, sys, subprocess
+    
+    if sys.platform != "win32":
+        return False
+
+    if getattr(sys, 'frozen', False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    # Look for bundled Textractor
+    paths = [
+        os.path.join(base, "Textractor", "x64", "Textractor.exe"),
+        os.path.join(base, "Textractor", "Textractor.exe"),
+    ]
+
+    for path in paths:
+        if os.path.exists(path):
+            subprocess.Popen([path])
+            return True
+
+    return False
+
+
+def get_textractor_path() -> str:
+    """Return path to bundled Textractor or empty string"""
+    import os, sys
+
+    if getattr(sys, 'frozen', False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    paths = [
+        os.path.join(base, "Textractor", "x64", "Textractor.exe"),
+        os.path.join(base, "Textractor", "Textractor.exe"),
+    ]
+
+    for path in paths:
+        if os.path.exists(path):
+            return path
+    return ""

@@ -67,16 +67,27 @@ def ocr_with_tesseract(image_bytes: bytes, lang: str = "jpn+chi_sim+kor+eng") ->
         import pytesseract
         from PIL import Image
 
-        # Common Tesseract paths on Windows
+        import sys
+
+        # Check bundled Tesseract first (inside Glossa folder)
+        if getattr(sys, 'frozen', False):
+            # PyInstaller bundle - Tesseract is next to Glossa.exe
+            base = os.path.dirname(sys.executable)
+        else:
+            base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
         tesseract_paths = [
+            os.path.join(base, "Tesseract-OCR", "tesseract.exe"),  # bundled
             r"C:\Program Files\Tesseract-OCR\tesseract.exe",
             r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-            r"C:\Users\user\AppData\Local\Tesseract-OCR\tesseract.exe",
         ]
 
         for path in tesseract_paths:
             if os.path.exists(path):
                 pytesseract.pytesseract.tesseract_cmd = path
+                # Set tessdata path
+                tessdata = os.path.join(os.path.dirname(path), "tessdata")
+                os.environ["TESSDATA_PREFIX"] = tessdata
                 break
 
         img = Image.open(io.BytesIO(image_bytes))
