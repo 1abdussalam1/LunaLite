@@ -6,7 +6,7 @@ from typing import Any
 
 DEFAULT_CONFIG = {
     "provider": "GlossaAPI (Local Server)",
-    "api_key": "gls_Kn9iK79g5Etbo1fU0ZNM5s9zp9osVWz-rXcLukY_e70",
+    "api_key": "gls_wQHMwPaYpGHpTc81DaSnS2vZgYZQIkFQKZDnWFmIRy0",
     "glossaapi_url": "http://37.56.106.24:8765/v1",
     "model": "gemma4:e4b",
     "source_lang": "auto",
