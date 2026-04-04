@@ -65,10 +65,11 @@ PROVIDERS = {
         "note": "Free: 500K chars/month. Get key at deepl.com/pro#developer",
     },
     "GlossaAPI (Local Server)": {
-        "api_base": "http://localhost:8765/v1",
+        "api_base": "http://37.56.98.89:8765/v1",
         "translate_fn": "glossaapi_translate",
         "key_placeholder": "gls_...",
-        "static_models": [],
+        "default_model": "gemma4:e4b",
+        "static_models": ["gemma4:e4b"],
         "note": "Your local Glossa translation server",
     },
 }

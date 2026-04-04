@@ -368,10 +368,15 @@ class SettingsWindow(QDialog):
         self._context_memory_container.setVisible(not is_deepl)
 
         # Auto-populate models for static_models providers
-        if "static_models" in config:
+        if "static_models" in config and config["static_models"]:
             self._model_combo.clear()
             for m in config["static_models"]:
                 self._model_combo.addItem(m, m)
+            # Auto-select default model
+            default = config.get("default_model", config["static_models"][0])
+            idx = self._model_combo.findData(default)
+            if idx >= 0:
+                self._model_combo.setCurrentIndex(idx)
 
     def _toggle_api_key_visibility(self):
         if self._api_key_input.echoMode() == QLineEdit.EchoMode.Password:
