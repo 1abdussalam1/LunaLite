@@ -35,6 +35,7 @@ def build():
         "--hidden-import", "sqlite3",
         "--hidden-import", "mss",
         "--hidden-import", "mss.tools",
+        "--hidden-import", "pytesseract",
         # Entry point
         "src/main.py",
     ]

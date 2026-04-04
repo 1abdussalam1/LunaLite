@@ -526,6 +526,9 @@ class SettingsWindow(QDialog):
         self._clipboard_checkbox = QCheckBox(t("clipboard_mode", "Clipboard"))
         layout.addWidget(self._clipboard_checkbox)
 
+        self._hook_checkbox = QCheckBox(t("hook_mode", "Hook (Textractor Named Pipe)"))
+        layout.addWidget(self._hook_checkbox)
+
         self._ocr_checkbox = QCheckBox(t("ocr_mode", "OCR (Screen Capture)"))
         layout.addWidget(self._ocr_checkbox)
 
@@ -557,11 +560,37 @@ class SettingsWindow(QDialog):
         layout.addWidget(audio_options)
         self._populate_audio_devices()
 
-        # Game executable path
+        # Hook instructions
         separator2 = QFrame()
         separator2.setFrameShape(QFrame.Shape.HLine)
         separator2.setStyleSheet(f"color: {DARK_ACCENT};")
         layout.addWidget(separator2)
+
+        hook_label = QLabel(t("label_hook_setup", "Hook Setup (Textractor):"))
+        hook_label.setStyleSheet(f"color: {DARK_HIGHLIGHT}; font-weight: bold;")
+        layout.addWidget(hook_label)
+
+        hook_instructions = QLabel(
+            "Hook mode uses Named Pipe to receive text from Textractor.\n"
+            "1. Install Textractor from the link below\n"
+            "2. Add Extension: NamedPipeOutput.xdll (pipe name: Glossa)\n"
+            "3. Open game with Textractor, attach process\n"
+            "4. Glossa will auto-receive the text"
+        )
+        hook_instructions.setWordWrap(True)
+        hook_instructions.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 11px; padding: 4px 0;")
+        layout.addWidget(hook_instructions)
+
+        self._download_textractor_btn = QPushButton(t("download_textractor", "Download Textractor"))
+        self._download_textractor_btn.setStyleSheet(f"background-color: {DARK_ACCENT};")
+        self._download_textractor_btn.clicked.connect(self._open_textractor_url)
+        layout.addWidget(self._download_textractor_btn)
+
+        # Game executable path
+        separator2b = QFrame()
+        separator2b.setFrameShape(QFrame.Shape.HLine)
+        separator2b.setStyleSheet(f"color: {DARK_ACCENT};")
+        layout.addWidget(separator2b)
 
         text_options_label = QLabel(t("label_text_options", "Text Mode Options:"))
         text_options_label.setStyleSheet(f"color: {DARK_HIGHLIGHT}; font-weight: bold;")
@@ -685,6 +714,10 @@ class SettingsWindow(QDialog):
         if path:
             self._exe_path_edit.setText(path)
             self._config.set("game_exe_path", path)
+
+    def _open_textractor_url(self):
+        import webbrowser
+        webbrowser.open("https://github.com/Artikash/Textractor/releases")
 
     def _on_inject_hook(self):
         exe_path = self._exe_path_edit.text().strip()
@@ -995,6 +1028,7 @@ class SettingsWindow(QDialog):
 
         # Source checkboxes
         self._clipboard_checkbox.setChecked(self._config.get("clipboard_enabled", True))
+        self._hook_checkbox.setChecked(self._config.get("hook_enabled", False))
         self._ocr_checkbox.setChecked(self._config.get("ocr_enabled", False))
         self._audio_checkbox.setChecked(self._config.get("audio_enabled", False))
 
@@ -1091,6 +1125,7 @@ class SettingsWindow(QDialog):
 
         # Source checkboxes
         self._config.set("clipboard_enabled", self._clipboard_checkbox.isChecked())
+        self._config.set("hook_enabled", self._hook_checkbox.isChecked())
         self._config.set("ocr_enabled", self._ocr_checkbox.isChecked())
         self._config.set("audio_enabled", self._audio_checkbox.isChecked())
 

@@ -21,6 +21,7 @@ from src.utils.cache import TranslationCache
 from src.core.ai_client import AIClient, TranslateWorker, AudioTranslateWorker
 from src.core.audio_capture import AudioCapture
 from src.core.text_extractor import ClipboardMonitor
+from src.core.text_hook import TextHookPipe
 from src.core.ocr_capture import OCRCapture
 from src.ui.overlay import OverlayWindow
 from src.ui.settings_window import SettingsWindow
@@ -234,6 +235,7 @@ class MainWindow(QMainWindow):
         self.cache = TranslationCache()
         self.audio_capture = AudioCapture()
         self.clipboard_monitor = ClipboardMonitor()
+        self.text_hook_pipe = TextHookPipe(self._on_hook_text)
         self.ocr_capture = OCRCapture(self.ai_client, self._on_ocr_text)
 
         # Overlay
@@ -312,6 +314,12 @@ class MainWindow(QMainWindow):
         self._clipboard_cb.setStyleSheet(cb_style)
         self._clipboard_cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         source_layout.addWidget(self._clipboard_cb)
+
+        self._hook_cb = QCheckBox(t("hook_mode", "Hook"))
+        self._hook_cb.setChecked(self.config.get("hook_enabled", False))
+        self._hook_cb.setStyleSheet(cb_style)
+        self._hook_cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        source_layout.addWidget(self._hook_cb)
 
         self._ocr_cb = QCheckBox(t("ocr_mode", "OCR"))
         self._ocr_cb.setChecked(self.config.get("ocr_enabled", False))
@@ -431,6 +439,7 @@ class MainWindow(QMainWindow):
         ctx_size = self.ai_client.get_context_size()
         self._context_label.setText(f"{t('context_indicator', 'Context')}: {ctx_size}/{max_ctx}")
         self._clipboard_cb.setText(t("clipboard_mode", "Clipboard"))
+        self._hook_cb.setText(t("hook_mode", "Hook"))
         self._ocr_cb.setText(t("ocr_mode", "OCR"))
         self._audio_cb.setText(t("audio_mode", "Audio"))
         self._tray_show_action.setText(t("show_window", "Show/Hide Window"))
@@ -529,6 +538,10 @@ class MainWindow(QMainWindow):
             self.clipboard_monitor.start()
             self.config.set("clipboard_enabled", True)
 
+        if self._hook_cb.isChecked():
+            self.text_hook_pipe.start()
+            self.config.set("hook_enabled", True)
+
         if self._audio_cb.isChecked():
             self.audio_capture.audio_chunk_ready.connect(self._on_audio_captured)
             self.audio_capture.start()
@@ -551,6 +564,9 @@ class MainWindow(QMainWindow):
                 self.clipboard_monitor.text_changed.disconnect(self._on_text_captured)
             except TypeError:
                 pass
+
+        if self.text_hook_pipe.is_running:
+            self.text_hook_pipe.stop()
 
         if self.audio_capture.is_running:
             self.audio_capture.stop()
@@ -612,6 +628,10 @@ class MainWindow(QMainWindow):
             self.overlay.set_text(result)
             self.overlay.set_rtl(is_rtl())
 
+    def _on_hook_text(self, text: str):
+        """Called when text arrives from Named Pipe (Textractor)."""
+        self._on_text_captured(text)
+
     def _on_ocr_text(self, text: str):
         """Called from OCR capture thread when text is detected."""
         self._on_text_captured(text)
@@ -663,6 +683,7 @@ class MainWindow(QMainWindow):
 
             # Sync checkboxes
             self._clipboard_cb.setChecked(self.config.get("clipboard_enabled", True))
+            self._hook_cb.setChecked(self.config.get("hook_enabled", False))
             self._ocr_cb.setChecked(self.config.get("ocr_enabled", False))
             self._audio_cb.setChecked(self.config.get("audio_enabled", False))
 

@@ -1,6 +1,17 @@
+"""
+OCR Capture using local Tesseract OCR
+Captures screen -> Tesseract reads text -> sends to translator
+
+Requirements on Windows:
+- Install Tesseract: https://github.com/UB-Mannheim/tesseract/wiki
+- pip install pytesseract
+- Download language data: jpn.traineddata, chi_sim.traineddata, kor.traineddata
+  Put in Tesseract tessdata folder
+"""
 import threading
 import time
 import io
+import os
 from typing import Optional, Tuple
 
 # Try MSS first (works with DirectX fullscreen games)
@@ -50,6 +61,43 @@ def grab_screenshot(region: Optional[Tuple[int, int, int, int]] = None) -> bytes
         raise RuntimeError("Neither mss nor Pillow is installed. Cannot capture screen.")
 
 
+def ocr_with_tesseract(image_bytes: bytes, lang: str = "jpn+chi_sim+kor+eng") -> str:
+    """Use local Tesseract to extract text from image."""
+    try:
+        import pytesseract
+        from PIL import Image
+
+        # Common Tesseract paths on Windows
+        tesseract_paths = [
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            r"C:\Users\user\AppData\Local\Tesseract-OCR\tesseract.exe",
+        ]
+
+        for path in tesseract_paths:
+            if os.path.exists(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                break
+
+        img = Image.open(io.BytesIO(image_bytes))
+
+        # Convert to grayscale for better OCR
+        img = img.convert("L")
+
+        # Upscale small images for better accuracy
+        if img.width < 800:
+            scale = 2
+            img = img.resize((img.width * scale, img.height * scale), Image.LANCZOS)
+
+        text = pytesseract.image_to_string(img, lang=lang, config="--psm 6")
+        return text.strip()
+    except ImportError:
+        return ""
+    except Exception as e:
+        print(f"Tesseract error: {e}")
+        return ""
+
+
 class OCRCapture:
     def __init__(self, ai_client, on_text_callback):
         self.ai_client = ai_client
@@ -58,6 +106,7 @@ class OCRCapture:
         self.interval = 2.0
         self.region: Optional[Tuple[int, int, int, int]] = None
         self.last_text = ""
+        self.ocr_lang = "jpn+chi_sim+kor+eng"  # Tesseract language codes
 
     def start(self, region=None):
         if not MSS_AVAILABLE and not PIL_AVAILABLE:
@@ -78,7 +127,14 @@ class OCRCapture:
         while self.running:
             try:
                 img_bytes = grab_screenshot(self.region)
-                text = self.ai_client.ocr_screenshot(img_bytes)
+
+                # Try Tesseract first (local, fast, no API needed)
+                text = ocr_with_tesseract(img_bytes, self.ocr_lang)
+
+                # If Tesseract not available or no text, try AI vision
+                if not text and hasattr(self, "ai_client") and self.ai_client:
+                    text = self.ai_client.ocr_screenshot(img_bytes)
+
                 if text and text.strip() != self.last_text and len(text.strip()) > 2:
                     self.last_text = text.strip()
                     self.on_text_callback(text.strip())
@@ -92,6 +148,10 @@ class OCRCapture:
     def set_region(self, region: Optional[Tuple[int, int, int, int]]):
         """Set capture region (x, y, width, height) or None for full screen."""
         self.region = region
+
+    def set_ocr_lang(self, lang: str):
+        """Set Tesseract OCR language codes (e.g. 'jpn+eng')."""
+        self.ocr_lang = lang
 
     def capture_region_selector(self):
         """Return current region or None for full screen."""

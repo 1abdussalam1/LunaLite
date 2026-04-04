@@ -5,3 +5,4 @@ mss>=9.0.1
 pyaudiowpatch>=0.2.12.6
 numpy>=2.2.4
 scipy>=1.15.2
+pytesseract>=0.3.13
