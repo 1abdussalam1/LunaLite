@@ -155,7 +155,7 @@ class OCRCapture:
                 if not text and hasattr(self, "ai_client") and self.ai_client:
                     text = self.ai_client.ocr_screenshot(img_bytes)
 
-                if text and text.strip() != self.last_text and len(text.strip()) > 2:
+                if text and text.strip() != self.last_text and len(text.strip()) > 1:
                     self.last_text = text.strip()
                     self.on_text_callback(text.strip())
             except Exception as e:
@@ -210,8 +210,7 @@ class OCRCapture:
                 data = json.loads(resp.read().decode())
                 # Return already-translated text directly!
                 translated = data.get("translated", "")
-                if translated:
-                    # Skip the normal translate step - already done
+                if translated and len(translated.strip()) > 1:
                     self.last_text = data.get("extracted_text", translated)
                     self.on_text_callback(translated)
                     return "__ALREADY_TRANSLATED__"

@@ -1,22 +1,18 @@
 """
 Glossa Overlay Window
-- Top section: shows translation (semi-transparent background)
-- Bottom section: transparent (see-through) - OCR reads this area
-- Draggable + resizable
-- When moved/resized, OCR region updates automatically
+- Translation text at top (auto-height, centered)
+- OCR region: the full overlay area (invisible border optional)
+- Draggable + resizable from bottom-right corner
 """
-from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSize, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QCursor
-from PyQt6.QtWidgets import QWidget, QApplication, QMenu, QSizeGrip, QVBoxLayout, QLabel
+from PyQt6.QtCore import Qt, QRect, QPoint, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QFontMetrics
+from PyQt6.QtWidgets import QWidget, QApplication, QMenu
 
-
-HANDLE_SIZE = 12  # resize handle in bottom-right corner
-TRANSLATION_HEIGHT = 60  # height of translation area at top
+HANDLE_SIZE = 16
 
 
 class OverlayWindow(QWidget):
-    # Emitted when position/size changes → OCR should update region
-    region_changed = pyqtSignal(int, int, int, int)  # x, y, w, h
+    region_changed = pyqtSignal(int, int, int, int)
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -27,6 +23,7 @@ class OverlayWindow(QWidget):
         self._resize_geo = None
         self._translation_text = ""
         self._rtl = False
+        self._show_border = True  # can be hidden from settings
 
         self._setup_window()
         self._apply_config()
@@ -39,17 +36,17 @@ class OverlayWindow(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
-        self.setMinimumSize(200, 100)
+        self.setMinimumSize(200, 60)
         self.setCursor(Qt.CursorShape.SizeAllCursor)
 
     def _apply_config(self):
         ov = self._config.get("overlay", {}) if isinstance(self._config, dict) else {}
-        x = ov.get("x", 100)
-        y = ov.get("y", 100)
-        w = ov.get("width", 500)
-        h = ov.get("height", 200)
-        self.setGeometry(x, y, w, h)
+        self.setGeometry(
+            ov.get("x", 100), ov.get("y", 100),
+            ov.get("width", 700), ov.get("height", 120)
+        )
         self.setWindowOpacity(ov.get("opacity", 0.95))
+        self._show_border = ov.get("show_border", True)
 
     # ── Paint ──────────────────────────────────────────────────────────────
 
@@ -57,71 +54,60 @@ class OverlayWindow(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        w = self.width()
-        h = self.height()
         ov = self._config.get("overlay", {}) if isinstance(self._config, dict) else {}
+        w, h = self.width(), self.height()
 
-        # ── Translation area (top) ──
         bg_color = ov.get("bg_color", "#000000")
-        bg_opacity = ov.get("bg_opacity", 0.85)
+        bg_opacity = ov.get("bg_opacity", 0.80)
         r, g, b = self._hex_to_rgb(bg_color)
         alpha = int(bg_opacity * 255)
 
-        trans_h = min(TRANSLATION_HEIGHT, h // 2)
-        p.setBrush(QBrush(QColor(r, g, b, alpha)))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(0, 0, w, trans_h, 8, 8)
-        # Fill bottom part of translation area (remove rounded bottom corners)
-        if trans_h < h:
-            p.drawRect(0, trans_h - 8, w, 8)
-
-        # Draw translation text
-        font_color = ov.get("font_color", "#ffffff")
-        font_size = ov.get("font_size", 14)
         font_family = ov.get("font_family", "Segoe UI")
-        fc = QColor(font_color)
-        p.setPen(fc)
+        font_size = ov.get("font_size", 16)
+        font_color = ov.get("font_color", "#ffffff")
+
         font = QFont(font_family, font_size)
+        font.setBold(False)
         p.setFont(font)
 
-        text_flags = Qt.AlignmentFlag.AlignVCenter
+        # ── Calculate text height ──
+        fm = QFontMetrics(font)
+        text_rect = QRect(14, 10, w - 28, h - 20)
+        flags = (Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter |
+                 Qt.TextFlag.TextWordWrap)
         if self._rtl:
-            text_flags |= Qt.AlignmentFlag.AlignRight
-        else:
-            text_flags |= Qt.AlignmentFlag.AlignLeft
+            flags = (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter |
+                     Qt.TextFlag.TextWordWrap)
 
-        text_rect = QRect(10, 0, w - 20, trans_h)
-        p.drawText(text_rect, text_flags | Qt.TextFlag.TextWordWrap, self._translation_text)
+        bounding = fm.boundingRect(text_rect, flags, self._translation_text)
+        text_h = max(bounding.height() + 24, 50) if self._translation_text else 0
 
-        # ── OCR area (bottom) — transparent with dashed border ──
-        ocr_rect = QRect(0, trans_h, w, h - trans_h)
-        p.setBrush(QBrush(QColor(0, 0, 0, 15)))  # barely visible
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawRect(ocr_rect)
+        # ── Draw background only if there's text ──
+        if self._translation_text and text_h > 0:
+            p.setBrush(QBrush(QColor(r, g, b, alpha)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(0, 0, w, text_h, 10, 10)
 
-        # Dashed border around OCR area
-        pen = QPen(QColor(255, 255, 255, 80))
-        pen.setStyle(Qt.PenStyle.DashLine)
-        pen.setWidth(1)
-        p.setPen(pen)
-        p.drawRect(ocr_rect.adjusted(0, 0, -1, -1))
+            # Draw text
+            p.setPen(QColor(font_color))
+            p.drawText(QRect(14, 0, w - 28, text_h), flags, self._translation_text)
 
-        # Resize handle (bottom-right)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QBrush(QColor(255, 255, 255, 100)))
-        for i in range(3):
-            offset = i * 4
-            p.drawLine(
-                w - HANDLE_SIZE + offset, h - 2,
-                w - 2, h - HANDLE_SIZE + offset
-            )
+        # ── Draw border (optional) ──
+        if self._show_border:
+            pen = QPen(QColor(255, 255, 255, 60))
+            pen.setStyle(Qt.PenStyle.DashLine)
+            pen.setWidth(1)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(0, 0, w - 1, h - 1)
 
-        # Small label in OCR area
-        p.setPen(QColor(255, 255, 255, 60))
-        small_font = QFont("Segoe UI", 8)
-        p.setFont(small_font)
-        p.drawText(QRect(4, trans_h + 2, w - 8, 16),
-                   Qt.AlignmentFlag.AlignLeft, "🌐 OCR Region")
+            # Resize handle dots
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(QColor(255, 255, 255, 120)))
+            for i in range(1, 4):
+                d = i * 5
+                p.drawEllipse(w - d - 3, h - 4, 3, 3)
+                p.drawEllipse(w - 4, h - d - 3, 3, 3)
 
         p.end()
 
@@ -133,6 +119,12 @@ class OverlayWindow(QWidget):
 
     def set_rtl(self, rtl: bool):
         self._rtl = rtl
+        self.update()
+
+    def set_show_border(self, show: bool):
+        self._show_border = show
+        if isinstance(self._config, dict):
+            self._config.setdefault("overlay", {})["show_border"] = show
         self.update()
 
     def set_font_size(self, size: int):
@@ -147,9 +139,10 @@ class OverlayWindow(QWidget):
 
     def set_bg_color(self, color: str, opacity: float = None):
         if isinstance(self._config, dict):
-            self._config.setdefault("overlay", {})["bg_color"] = color
+            ov = self._config.setdefault("overlay", {})
+            ov["bg_color"] = color
             if opacity is not None:
-                self._config["overlay"]["bg_opacity"] = opacity
+                ov["bg_opacity"] = opacity
         self.update()
 
     def set_opacity(self, opacity: float):
@@ -169,30 +162,22 @@ class OverlayWindow(QWidget):
         self.update()
 
     def get_ocr_region(self):
-        """Return (x, y, w, h) of the OCR area (bottom part of overlay)"""
+        """Full overlay area is the OCR region"""
         geo = self.geometry()
-        trans_h = min(TRANSLATION_HEIGHT, geo.height() // 2)
-        return (
-            geo.x(),
-            geo.y() + trans_h,
-            geo.width(),
-            geo.height() - trans_h
-        )
+        return geo.x(), geo.y(), geo.width(), geo.height()
 
     def save_position(self):
         geo = self.geometry()
         if isinstance(self._config, dict):
             ov = self._config.setdefault("overlay", {})
             ov.update({"x": geo.x(), "y": geo.y(), "width": geo.width(), "height": geo.height()})
-        # Notify OCR to update region
         x, y, w, h = self.get_ocr_region()
         self.region_changed.emit(x, y, w, h)
 
     # ── Mouse Events ────────────────────────────────────────────────────────
 
     def _in_resize_zone(self, pos):
-        return (pos.x() > self.width() - HANDLE_SIZE * 2 and
-                pos.y() > self.height() - HANDLE_SIZE * 2)
+        return pos.x() > self.width() - HANDLE_SIZE and pos.y() > self.height() - HANDLE_SIZE
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -209,9 +194,9 @@ class OverlayWindow(QWidget):
     def mouseMoveEvent(self, event):
         if self._resizing and self._resize_start:
             delta = event.globalPosition().toPoint() - self._resize_start
-            new_w = max(200, self._resize_geo.width() + delta.x())
-            new_h = max(100, self._resize_geo.height() + delta.y())
-            self.setGeometry(self._resize_geo.x(), self._resize_geo.y(), new_w, new_h)
+            nw = max(200, self._resize_geo.width() + delta.x())
+            nh = max(60, self._resize_geo.height() + delta.y())
+            self.setGeometry(self._resize_geo.x(), self._resize_geo.y(), nw, nh)
             self.update()
         elif self._drag_pos is not None:
             self.move(event.globalPosition().toPoint() - self._drag_pos)
@@ -234,16 +219,20 @@ class OverlayWindow(QWidget):
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         menu.setStyleSheet("""
-            QMenu { background: #1e1e1e; color: #fff; border: 1px solid #333;
-                    border-radius: 6px; padding: 4px; }
-            QMenu::item { padding: 6px 18px; border-radius: 4px; }
-            QMenu::item:selected { background: #0f3460; }
+            QMenu { background:#1e1e1e; color:#fff; border:1px solid #333;
+                    border-radius:6px; padding:4px; }
+            QMenu::item { padding:6px 18px; border-radius:4px; }
+            QMenu::item:selected { background:#0f3460; }
         """)
+        border_text = "Hide Border" if self._show_border else "Show Border"
+        border_act = menu.addAction(f"👁 {border_text}")
         settings_act = menu.addAction("⚙️ Settings")
         menu.addSeparator()
         exit_act = menu.addAction("✕ Exit")
         action = menu.exec(event.globalPos())
-        if action == settings_act:
+        if action == border_act:
+            self.set_show_border(not self._show_border)
+        elif action == settings_act:
             self._on_settings_requested()
         elif action == exit_act:
             QApplication.quit()
