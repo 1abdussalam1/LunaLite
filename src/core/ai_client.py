@@ -69,7 +69,7 @@ PROVIDERS = {
         "translate_fn": "glossaapi_translate",
         "key_placeholder": "gls_...",
         "default_model": "gemma4:e4b",
-        "static_models": ["gemma4:e4b"],
+        "static_models": ["gemma4:e4b", "gemma4:e2b"],
         "note": "Your local Glossa translation server",
     },
 }
