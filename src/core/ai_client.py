@@ -64,6 +64,13 @@ PROVIDERS = {
         "static_models": ["deepl-free"],
         "note": "Free: 500K chars/month. Get key at deepl.com/pro#developer",
     },
+    "GlossaAPI (Local Server)": {
+        "api_base": "http://localhost:8765/v1",
+        "translate_fn": "glossaapi_translate",
+        "key_placeholder": "gls_...",
+        "static_models": [],
+        "note": "Your local Glossa translation server",
+    },
 }
 
 
@@ -319,6 +326,51 @@ class AIClient(QObject):
         except URLError as e:
             raise RuntimeError(f"DeepL Connection Error: {e.reason}") from e
 
+    def glossaapi_translate(self, text: str, source_lang: str, target_lang: str) -> str:
+        if not text.strip():
+            return ""
+
+        config = self._provider_config()
+        api_base = config["api_base"]
+
+        payload = json.dumps({
+            "text": text,
+            "source_lang": source_lang,
+            "target_lang": target_lang,
+            "model": self._model or "gemma4:e4b",
+            "context": [
+                {"source": h["source"], "translated": h["translated"]}
+                for h in self.context_history[-5:]
+            ] if self.context_enabled else [],
+        }).encode()
+
+        req = Request(
+            f"{api_base}/translate",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-API-Key": self._api_key,
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read().decode())
+                translated = result.get("translated", "")
+                tokens_in = result.get("tokens_used", 0) // 2
+                tokens_out = result.get("tokens_used", 0) // 2
+                self.token_usage.add(tokens_in, tokens_out)
+                self.token_count_updated.emit(self.token_usage.total_input, self.token_usage.total_output)
+                if self.context_enabled and translated:
+                    self.context_history.append({"source": text, "translated": translated})
+                    self.context_changed.emit(len(self.context_history), self.max_context)
+                self.translation_ready.emit(translated)
+                return translated
+        except HTTPError as e:
+            raise RuntimeError(f"GlossaAPI Error ({e.code}): {e.read().decode()[:200]}") from e
+        except URLError as e:
+            raise RuntimeError(f"GlossaAPI Connection Error: {e.reason}") from e
+
     def translate_text(self, text: str, source_lang: str = "auto", target_lang: str = "ar") -> str:
         config = self._provider_config()
         fn_name = config.get("translate_fn", "gemini_translate")
@@ -428,6 +480,18 @@ class AIClient(QObject):
     def fetch_models(self) -> list[dict]:
         config = self._provider_config()
         try:
+            if self._provider == "GlossaAPI (Local Server)":
+                api_base = config["api_base"]
+                req = Request(
+                    f"{api_base}/models",
+                    headers={"X-API-Key": self._api_key},
+                )
+                with urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode())
+                    models = [{"id": m["id"], "name": m["name"]} for m in data.get("models", [])]
+                    self.models_fetched.emit(models)
+                    return models
+
             if "static_models" in config:
                 models = [{"id": m, "name": m} for m in config["static_models"]]
                 self.models_fetched.emit(models)
@@ -463,7 +527,13 @@ class AIClient(QObject):
         fn_name = config.get("translate_fn", "gemini_translate")
         try:
             start = time.time()
-            if fn_name == "gemini_translate":
+            if fn_name == "glossaapi_translate":
+                result = self.glossaapi_translate("Hello", "en", "ar")
+                elapsed = time.time() - start
+                text = result or "OK"
+                self.api_test_result.emit(True, f"{text} ({elapsed:.2f}s)", elapsed)
+                return True, text, elapsed
+            elif fn_name == "gemini_translate":
                 result = self._gemini_request(
                     f"models/{self._model}:generateContent",
                     {

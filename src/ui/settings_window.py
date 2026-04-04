@@ -243,6 +243,18 @@ class SettingsWindow(QDialog):
         self._provider_combo.currentTextChanged.connect(self._on_provider_changed)
         form.addRow(QLabel(t("provider", "Provider:")), self._provider_combo)
 
+        # Server URL (for GlossaAPI)
+        self._server_url_label = QLabel(t("label_server_url", "Server URL:"))
+        self._server_url_input = QLineEdit()
+        self._server_url_input.setPlaceholderText("http://localhost:8765/v1")
+        self._server_url_container = QWidget()
+        server_url_layout = QHBoxLayout(self._server_url_container)
+        server_url_layout.setContentsMargins(0, 0, 0, 0)
+        server_url_layout.addWidget(self._server_url_input)
+        form.addRow(self._server_url_label, self._server_url_container)
+        self._server_url_label.setVisible(False)
+        self._server_url_container.setVisible(False)
+
         # API key
         api_key_layout = QHBoxLayout()
         self._api_key_input = QLineEdit()
@@ -336,6 +348,11 @@ class SettingsWindow(QDialog):
         config = PROVIDERS.get(provider_name, {})
         placeholder = config.get("key_placeholder", "")
         self._api_key_input.setPlaceholderText(placeholder)
+
+        # Show/hide server URL field for GlossaAPI
+        is_glossaapi = provider_name == "GlossaAPI (Local Server)"
+        self._server_url_label.setVisible(is_glossaapi)
+        self._server_url_container.setVisible(is_glossaapi)
 
         # Show/hide note
         note = config.get("note", "")
@@ -950,6 +967,10 @@ class SettingsWindow(QDialog):
 
         self._api_key_input.setText(self._config.get("api_key", ""))
 
+        # GlossaAPI server URL
+        glossaapi_url = self._config.get("glossaapi_url", "http://localhost:8765/v1")
+        self._server_url_input.setText(glossaapi_url)
+
         model = self._config.get("model", "gemini-2.0-flash")
         idx = self._model_combo.findData(model)
         if idx >= 0:
@@ -1049,6 +1070,12 @@ class SettingsWindow(QDialog):
         # Provider
         self._config.set("provider", self._provider_combo.currentText())
         self._config.set("api_key", self._api_key_input.text().strip())
+
+        # GlossaAPI server URL
+        glossaapi_url = self._server_url_input.text().strip() or "http://localhost:8765/v1"
+        self._config.set("glossaapi_url", glossaapi_url)
+        if "GlossaAPI (Local Server)" in PROVIDERS:
+            PROVIDERS["GlossaAPI (Local Server)"]["api_base"] = glossaapi_url
 
         model_data = self._model_combo.currentData()
         model_text = self._model_combo.currentText()
