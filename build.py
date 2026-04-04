@@ -33,6 +33,8 @@ def build():
         "--hidden-import", "numpy",
         "--hidden-import", "scipy",
         "--hidden-import", "sqlite3",
+        "--hidden-import", "mss",
+        "--hidden-import", "mss.tools",
         # Entry point
         "src/main.py",
     ]
