@@ -327,6 +327,17 @@ class MainWindow(QMainWindow):
         self._ocr_cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         source_layout.addWidget(self._ocr_cb)
 
+        self._select_region_btn = QPushButton("\U0001f4d0")
+        self._select_region_btn.setFixedSize(28, 22)
+        self._select_region_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._select_region_btn.setToolTip(t("select_region", "Select OCR Region"))
+        self._select_region_btn.setStyleSheet("""
+            QPushButton { background: transparent; border: 1px solid #444; border-radius: 4px; font-size: 12px; color: #aaa; padding: 0; }
+            QPushButton:hover { border-color: #e94560; color: #e94560; }
+        """)
+        self._select_region_btn.clicked.connect(self._on_select_ocr_region)
+        source_layout.addWidget(self._select_region_btn)
+
         self._audio_cb = QCheckBox(t("audio_mode", "Audio"))
         self._audio_cb.setChecked(self.config.get("audio_enabled", False))
         self._audio_cb.setStyleSheet(cb_style)
@@ -540,6 +551,10 @@ class MainWindow(QMainWindow):
 
         if self._hook_cb.isChecked():
             self.text_hook_pipe.start()
+            # Try to launch Textractor automatically
+            from src.core.text_hook import launch_textractor, get_textractor_path
+            if get_textractor_path():
+                launch_textractor()
             self.config.set("hook_enabled", True)
 
         if self._audio_cb.isChecked():
@@ -550,6 +565,14 @@ class MainWindow(QMainWindow):
         if self._ocr_cb.isChecked():
             interval = self.config.get("ocr_interval", 2.0)
             self.ocr_capture.set_interval(interval)
+            # Load saved OCR region
+            region = self.config.get("ocr_region")
+            if region:
+                x, y, w, h = region
+                self.ocr_capture.set_region((x, y, w, h))
+            else:
+                self.ocr_capture.set_region(None)
+            self.ocr_capture.target_lang = self.config.get("target_lang", "ar")
             self.ocr_capture.start()
             self.config.set("ocr_enabled", True)
 
@@ -634,7 +657,21 @@ class MainWindow(QMainWindow):
 
     def _on_ocr_text(self, text: str):
         """Called from OCR capture thread when text is detected."""
-        self._on_text_captured(text)
+        if text and len(text.strip()) > 2:
+            self._on_text_captured(text.strip())
+
+    def _on_select_ocr_region(self):
+        """Open the region selector overlay."""
+        from src.ui.region_selector import RegionSelector
+        self._region_selector = RegionSelector()
+        self._region_selector.region_selected.connect(self._on_ocr_region_selected)
+        self._region_selector.cancelled.connect(lambda: None)
+        self._region_selector.show()
+
+    def _on_ocr_region_selected(self, x, y, w, h):
+        """Called when user selects an OCR region."""
+        self.config.set("ocr_region", [x, y, w, h])
+        self.ocr_capture.set_region((x, y, w, h))
 
     def _cleanup_worker(self, worker):
         if worker in self._workers:

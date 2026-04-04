@@ -118,6 +118,7 @@ class OCRCapture:
         self.region: Optional[Tuple[int, int, int, int]] = None
         self.last_text = ""
         self.ocr_lang = "jpn+chi_sim+kor+eng"  # Tesseract language codes
+        self.target_lang = "ar"
 
     def start(self, region=None):
         if not MSS_AVAILABLE and not PIL_AVAILABLE:
@@ -139,10 +140,18 @@ class OCRCapture:
             try:
                 img_bytes = grab_screenshot(self.region)
 
-                # Try Tesseract first (local, fast, no API needed)
-                text = ocr_with_tesseract(img_bytes, self.ocr_lang)
+                # Try GlossaAPI /translate/image (Gemma4 vision → extract + translate)
+                text = self._ocr_via_glossaapi(img_bytes)
 
-                # If Tesseract not available or no text, try AI vision
+                # If GlossaAPI handled it, skip (callback already called)
+                if text == "__ALREADY_TRANSLATED__":
+                    continue
+
+                # Fallback: local Tesseract → then translate via normal flow
+                if not text:
+                    text = ocr_with_tesseract(img_bytes, self.ocr_lang)
+
+                # Last fallback: AI vision via ai_client
                 if not text and hasattr(self, "ai_client") and self.ai_client:
                     text = self.ai_client.ocr_screenshot(img_bytes)
 
@@ -152,6 +161,64 @@ class OCRCapture:
             except Exception as e:
                 print(f"OCR capture error: {e}")
             time.sleep(self.interval)
+
+    def _ocr_via_glossaapi(self, image_bytes: bytes) -> str:
+        """Send screenshot to GlossaAPI /translate/image endpoint"""
+        try:
+            import urllib.request
+            import json
+            import sys
+            import os
+
+            # Get GlossaAPI URL and key from ai_client config
+            if not hasattr(self, 'ai_client') or not self.ai_client:
+                return ""
+            
+            provider_config = self.ai_client._provider_config()
+            if "glossaapi" not in self.ai_client._provider.lower():
+                return ""
+
+            api_base = provider_config.get("api_base", "")
+            api_key = self.ai_client._api_key
+            target_lang = getattr(self, 'target_lang', 'ar')
+
+            if not api_key or not api_base:
+                return ""
+
+            # Build multipart form data
+            boundary = "glossaboundary12345"
+            body = (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="target_lang"\r\n\r\n{target_lang}\r\n'
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="source_lang"\r\n\r\nauto\r\n'
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="image"; filename="screen.png"\r\n'
+                f'Content-Type: image/png\r\n\r\n'
+            ).encode() + image_bytes + f"\r\n--{boundary}--\r\n".encode()
+
+            url = api_base.rstrip("/") + "/translate/image"
+            req = urllib.request.Request(
+                url, data=body,
+                headers={
+                    "X-API-Key": api_key,
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+                # Return already-translated text directly!
+                translated = data.get("translated", "")
+                if translated:
+                    # Skip the normal translate step - already done
+                    self.last_text = data.get("extracted_text", translated)
+                    self.on_text_callback(translated)
+                    return "__ALREADY_TRANSLATED__"
+                return data.get("extracted_text", "")
+        except Exception as e:
+            print(f"GlossaAPI OCR error: {e}")
+            return ""
 
     def set_interval(self, seconds: float):
         self.interval = max(1.0, min(10.0, seconds))

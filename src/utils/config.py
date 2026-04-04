@@ -20,6 +20,7 @@ DEFAULT_CONFIG = {
     "audio_enabled": False,
     "ocr_enabled": False,
     "audio_device": -1,
+    "ocr_region": None,  # None = full screen, [x, y, w, h] = specific region
     "ocr_interval": 2.0,
     "ocr_model": "glm-4.6v-flashx",
     "ocr_provider": "",

@@ -543,6 +543,42 @@ class SettingsWindow(QDialog):
         self._ocr_interval_spin.setSuffix("s")
         ocr_layout.addRow(QLabel(t("ocr_interval", "OCR Interval:")), self._ocr_interval_spin)
 
+        # OCR region selector
+        region_row = QWidget()
+        region_row_layout = QHBoxLayout(region_row)
+        region_row_layout.setContentsMargins(0, 0, 0, 0)
+        region_row_layout.setSpacing(8)
+
+        self._select_region_btn = QPushButton(t("select_region", "Select Region"))
+        self._select_region_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._select_region_btn.setFixedHeight(28)
+        self._select_region_btn.clicked.connect(self._on_select_region)
+        region_row_layout.addWidget(self._select_region_btn)
+
+        saved_region = self._config.get("ocr_region")
+        if saved_region:
+            region_text = f"{saved_region[0]},{saved_region[1]} {saved_region[2]}x{saved_region[3]}"
+        else:
+            region_text = t("full_screen", "Full Screen")
+        self._region_label = QLabel(region_text)
+        self._region_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        region_row_layout.addWidget(self._region_label)
+
+        region_row_layout.addStretch()
+
+        self._clear_region_btn = QPushButton("X")
+        self._clear_region_btn.setFixedSize(24, 24)
+        self._clear_region_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clear_region_btn.setToolTip(t("clear_region", "Reset to Full Screen"))
+        self._clear_region_btn.setStyleSheet("""
+            QPushButton { background: transparent; border: none; color: #888; font-size: 12px; }
+            QPushButton:hover { color: #e94560; }
+        """)
+        self._clear_region_btn.clicked.connect(self._on_clear_region)
+        region_row_layout.addWidget(self._clear_region_btn)
+
+        ocr_layout.addRow(QLabel(t("ocr_region_label", "Region:")), region_row)
+
         layout.addWidget(ocr_options)
 
         self._audio_checkbox = QCheckBox(t("audio_mode", "Audio (Loopback)"))
@@ -736,6 +772,23 @@ class SettingsWindow(QDialog):
             inject_hook(exe_path)
         except Exception as e:
             QMessageBox.warning(self, t("error", "Error"), str(e))
+
+    def _on_select_region(self):
+        from src.ui.region_selector import RegionSelector
+        self._region_selector = RegionSelector()
+        self._region_selector.region_selected.connect(self._on_region_selected)
+        self._region_selector.cancelled.connect(lambda: self.show())
+        self.hide()  # Hide settings while selecting
+        self._region_selector.show()
+
+    def _on_region_selected(self, x, y, w, h):
+        self.show()
+        self._region_label.setText(f"{x},{y} {w}x{h}")
+        self._config.set("ocr_region", [x, y, w, h])
+
+    def _on_clear_region(self):
+        self._config.set("ocr_region", None)
+        self._region_label.setText(t("full_screen", "Full Screen"))
 
     def _on_reset_prompt(self):
         self._system_prompt_edit.setPlainText(DEFAULT_SYSTEM_PROMPT)
