@@ -15,18 +15,23 @@ except ImportError:
 from PyQt6.QtCore import QObject, pyqtSignal
 
 
-def get_loopback_devices():
+def get_loopback_devices() -> list[tuple[str, int]]:
     """Return list of (name, index) for WASAPI loopback devices"""
     try:
         import pyaudiowpatch as pyaudio
         p = pyaudio.PyAudio()
         devices = []
         for i in range(p.get_device_count()):
-            info = p.get_device_info_by_index(i)
-            if info.get("isLoopbackDevice", False):
-                devices.append((info["name"], i))
+            try:
+                info = p.get_device_info_by_index(i)
+                if info.get("isLoopbackDevice", False):
+                    devices.append((info["name"], i))
+            except Exception:
+                continue
         p.terminate()
         return devices if devices else [("Default System Audio", -1)]
+    except ImportError:
+        return [("Default System Audio", -1)]
     except Exception:
         return [("Default System Audio", -1)]
 

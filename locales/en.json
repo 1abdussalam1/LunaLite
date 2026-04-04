@@ -149,6 +149,9 @@
   "preview_sample": "This is a preview of the overlay text.",
   "title_font_color": "Select Font Color",
   "title_bg_color": "Select Background Color",
+  "deepl_provider": "DeepL (No AI - High Quality)",
+  "deepl_note": "Free: 500K chars/month | Get key: deepl.com/pro#developer",
+  "provider_note": "Note",
   "languages": {
     "auto": "Auto Detect",
     "ja": "Japanese",

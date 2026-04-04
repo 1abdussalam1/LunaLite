@@ -283,6 +283,13 @@ class SettingsWindow(QDialog):
         test_layout.addWidget(self._test_result_label, 1)
         layout.addLayout(test_layout)
 
+        # Provider note (for DeepL etc.)
+        self._provider_note_label = QLabel("")
+        self._provider_note_label.setWordWrap(True)
+        self._provider_note_label.setStyleSheet(f"color: {DARK_HIGHLIGHT}; font-size: 12px;")
+        self._provider_note_label.setVisible(False)
+        layout.addWidget(self._provider_note_label)
+
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
         separator.setStyleSheet(f"color: {DARK_ACCENT};")
@@ -329,6 +336,25 @@ class SettingsWindow(QDialog):
         config = PROVIDERS.get(provider_name, {})
         placeholder = config.get("key_placeholder", "")
         self._api_key_input.setPlaceholderText(placeholder)
+
+        # Show/hide note
+        note = config.get("note", "")
+        if note:
+            self._provider_note_label.setText(f"{t('provider_note', 'Note')}: {note}")
+            self._provider_note_label.setVisible(True)
+        else:
+            self._provider_note_label.setVisible(False)
+
+        # Hide system prompt & context memory for non-AI providers (DeepL)
+        is_deepl = config.get("translate_fn") == "deepl_translate"
+        self._system_prompt_container.setVisible(not is_deepl)
+        self._context_memory_container.setVisible(not is_deepl)
+
+        # Auto-populate models for static_models providers
+        if "static_models" in config:
+            self._model_combo.clear()
+            for m in config["static_models"]:
+                self._model_combo.addItem(m, m)
 
     def _toggle_api_key_visibility(self):
         if self._api_key_input.echoMode() == QLineEdit.EchoMode.Password:
@@ -548,40 +574,52 @@ class SettingsWindow(QDialog):
         ui_lang_form.addRow(QLabel(t("label_ui_language", "UI Language:")), self._ui_lang_combo)
         layout.addLayout(ui_lang_form)
 
-        # System Prompt
+        # System Prompt (container for hide/show with DeepL)
+        self._system_prompt_container = QWidget()
+        sp_layout = QVBoxLayout(self._system_prompt_container)
+        sp_layout.setContentsMargins(0, 0, 0, 0)
+        sp_layout.setSpacing(6)
+
         separator4 = QFrame()
         separator4.setFrameShape(QFrame.Shape.HLine)
         separator4.setStyleSheet(f"color: {DARK_ACCENT};")
-        layout.addWidget(separator4)
+        sp_layout.addWidget(separator4)
 
         prompt_label = QLabel(t("system_prompt", "System Prompt"))
         prompt_label.setStyleSheet(f"color: {DARK_HIGHLIGHT}; font-weight: bold;")
-        layout.addWidget(prompt_label)
+        sp_layout.addWidget(prompt_label)
 
         self._system_prompt_edit = QTextEdit()
         self._system_prompt_edit.setFixedHeight(100)
         self._system_prompt_edit.setPlaceholderText(t("system_prompt", "System Prompt"))
-        layout.addWidget(self._system_prompt_edit)
+        sp_layout.addWidget(self._system_prompt_edit)
 
         prompt_btn_layout = QHBoxLayout()
         self._reset_prompt_btn = QPushButton(t("reset_prompt", "Reset to Default"))
         self._reset_prompt_btn.clicked.connect(self._on_reset_prompt)
         prompt_btn_layout.addWidget(self._reset_prompt_btn)
         prompt_btn_layout.addStretch(1)
-        layout.addLayout(prompt_btn_layout)
+        sp_layout.addLayout(prompt_btn_layout)
 
         prompt_hint = QLabel(t("prompt_hint", "Variables: {source_lang}, {target_lang}, {context}"))
         prompt_hint.setStyleSheet("color: #888888; font-size: 11px;")
-        layout.addWidget(prompt_hint)
+        sp_layout.addWidget(prompt_hint)
 
-        # Context Memory
+        layout.addWidget(self._system_prompt_container)
+
+        # Context Memory (container for hide/show with DeepL)
+        self._context_memory_container = QWidget()
+        cm_layout = QVBoxLayout(self._context_memory_container)
+        cm_layout.setContentsMargins(0, 0, 0, 0)
+        cm_layout.setSpacing(6)
+
         separator5 = QFrame()
         separator5.setFrameShape(QFrame.Shape.HLine)
         separator5.setStyleSheet(f"color: {DARK_ACCENT};")
-        layout.addWidget(separator5)
+        cm_layout.addWidget(separator5)
 
         self._context_memory_checkbox = QCheckBox(t("context_memory", "Enable Context Memory"))
-        layout.addWidget(self._context_memory_checkbox)
+        cm_layout.addWidget(self._context_memory_checkbox)
 
         context_size_layout = QHBoxLayout()
         context_size_label = QLabel(t("context_size", "Context Size"))
@@ -594,7 +632,7 @@ class SettingsWindow(QDialog):
         self._context_size_value_label = QLabel("10")
         self._context_size_value_label.setFixedWidth(24)
         context_size_layout.addWidget(self._context_size_value_label)
-        layout.addLayout(context_size_layout)
+        cm_layout.addLayout(context_size_layout)
 
         self._clear_context_btn = QPushButton(t("clear_context", "Clear Context"))
         self._clear_context_btn.setStyleSheet(
@@ -602,7 +640,9 @@ class SettingsWindow(QDialog):
             "QPushButton:hover { background-color: #e74c3c; }"
         )
         self._clear_context_btn.clicked.connect(self._on_clear_context)
-        layout.addWidget(self._clear_context_btn)
+        cm_layout.addWidget(self._clear_context_btn)
+
+        layout.addWidget(self._context_memory_container)
 
         layout.addStretch(1)
         return tab

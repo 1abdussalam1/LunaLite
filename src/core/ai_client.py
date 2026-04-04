@@ -54,9 +54,15 @@ PROVIDERS = {
             "glm-5v-turbo",        # $1.2/1M - vision
             "glm-4.6v",            # $0.3/1M - vision
             "glm-ocr",             # $0.03/1M - OCR specialized
-            "glm-4.6v-flashx",     # $0.004/1M - vision fast
         ],
         "ocr_model": "glm-4.6v-flashx",
+    },
+    "DeepL": {
+        "api_base": "https://api-free.deepl.com/v2",
+        "translate_fn": "deepl_translate",
+        "key_placeholder": "your-deepl-api-key:fx",
+        "static_models": ["deepl-free"],
+        "note": "Free: 500K chars/month. Get key at deepl.com/pro#developer",
     },
 }
 
@@ -270,6 +276,49 @@ class AIClient(QObject):
 
         return translated
 
+    def deepl_translate(self, text: str, source_lang: str, target_lang: str) -> str:
+        if not text.strip():
+            return ""
+
+        lang_map = {
+            "auto": None, "en": "EN", "ar": "AR", "ja": "JA",
+            "zh": "ZH", "ko": "KO", "fr": "FR", "de": "DE",
+            "es": "ES", "ru": "RU", "it": "IT", "pt": "PT-BR",
+            "nl": "NL", "pl": "PL", "tr": "TR",
+        }
+        src = lang_map.get(source_lang.lower())
+        tgt = lang_map.get(target_lang.lower(), target_lang.upper())
+
+        import urllib.parse
+        params = {"text": text, "target_lang": tgt, "auth_key": self._api_key}
+        if src:
+            params["source_lang"] = src
+
+        body = urllib.parse.urlencode(params).encode("utf-8")
+        req = Request(
+            "https://api-free.deepl.com/v2/translate",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read().decode("utf-8"))
+                translated = result["translations"][0]["text"]
+                chars = len(text)
+                self.token_usage.add(chars, len(translated))
+                self.token_count_updated.emit(self.token_usage.total_input, self.token_usage.total_output)
+                if self.context_enabled and translated:
+                    self.context_history.append({"source": text, "translated": translated})
+                    self.context_changed.emit(len(self.context_history), self.max_context)
+                self.translation_ready.emit(translated)
+                return translated
+        except HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"DeepL Error ({e.code}): {body[:200]}") from e
+        except URLError as e:
+            raise RuntimeError(f"DeepL Connection Error: {e.reason}") from e
+
     def translate_text(self, text: str, source_lang: str = "auto", target_lang: str = "ar") -> str:
         config = self._provider_config()
         fn_name = config.get("translate_fn", "gemini_translate")
@@ -429,6 +478,10 @@ class AIClient(QObject):
                 out = usage.get("candidatesTokenCount", 0)
                 self.token_usage.add(inp, out)
                 self.token_count_updated.emit(self.token_usage.total_input, self.token_usage.total_output)
+            elif fn_name == "deepl_translate":
+                result = self.deepl_translate("Hello", "en", target_lang="ar")
+                elapsed = time.time() - start
+                text = result
             else:
                 client = self._get_openai_client()
                 response = client.chat.completions.create(
