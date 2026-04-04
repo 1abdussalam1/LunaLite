@@ -47,6 +47,18 @@ def main():
 
     i18n.language_changed.connect(on_language_changed)
 
+    # Check and download missing components on first run
+    from src.installer import needs_install
+    missing = needs_install()
+    if missing:
+        from PyQt6.QtCore import QEventLoop
+        from src.ui.install_window import InstallWindow
+        install_win = InstallWindow(missing)
+        loop = QEventLoop()
+        install_win.install_complete.connect(loop.quit)
+        install_win.show()
+        loop.exec()
+
     window = MainWindow()
     window.show()
 
