@@ -1,17 +1,34 @@
-from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QPoint, pyqtProperty, QTimer
-from PyQt6.QtGui import QColor, QFont, QAction, QCursor
-from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QMenu, QApplication, QGraphicsOpacityEffect
+"""
+Glossa Overlay Window
+- Top section: shows translation (semi-transparent background)
+- Bottom section: transparent (see-through) - OCR reads this area
+- Draggable + resizable
+- When moved/resized, OCR region updates automatically
+"""
+from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSize, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QCursor
+from PyQt6.QtWidgets import QWidget, QApplication, QMenu, QSizeGrip, QVBoxLayout, QLabel
+
+
+HANDLE_SIZE = 12  # resize handle in bottom-right corner
+TRANSLATION_HEIGHT = 60  # height of translation area at top
 
 
 class OverlayWindow(QWidget):
+    # Emitted when position/size changes → OCR should update region
+    region_changed = pyqtSignal(int, int, int, int)  # x, y, w, h
+
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self._config = config
         self._drag_pos = None
-        self._text_opacity = 1.0
+        self._resizing = False
+        self._resize_start = None
+        self._resize_geo = None
+        self._translation_text = ""
+        self._rtl = False
 
         self._setup_window()
-        self._setup_ui()
         self._apply_config()
 
     def _setup_window(self):
@@ -21,223 +38,228 @@ class OverlayWindow(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setMinimumSize(200, 80)
-
-    def _setup_ui(self):
-        self._container = QWidget(self)
-        self._container.setObjectName("overlayContainer")
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._container)
-
-        inner_layout = QVBoxLayout(self._container)
-        inner_layout.setContentsMargins(12, 8, 12, 10)
-        inner_layout.setSpacing(4)
-
-        self._branding = QLabel("\U0001f310 Glossa")
-        self._branding.setObjectName("branding")
-        self._branding.setFixedHeight(16)
-        inner_layout.addWidget(self._branding)
-
-        self._text_label = QLabel("")
-        self._text_label.setObjectName("translationText")
-        self._text_label.setWordWrap(True)
-        self._text_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        inner_layout.addWidget(self._text_label, 1)
-
-        self._opacity_effect = QGraphicsOpacityEffect(self._text_label)
-        self._opacity_effect.setOpacity(1.0)
-        self._text_label.setGraphicsEffect(self._opacity_effect)
-
-        self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity")
-        self._fade_anim.setDuration(300)
-        self._fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        self.setMinimumSize(200, 100)
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
 
     def _apply_config(self):
-        ov = self._config.get("overlay", {})
-        if isinstance(ov, dict):
-            x = ov.get("x", 100)
-            y = ov.get("y", 100)
-            w = ov.get("width", 500)
-            h = ov.get("height", 150)
-            self.setGeometry(x, y, w, h)
+        ov = self._config.get("overlay", {}) if isinstance(self._config, dict) else {}
+        x = ov.get("x", 100)
+        y = ov.get("y", 100)
+        w = ov.get("width", 500)
+        h = ov.get("height", 200)
+        self.setGeometry(x, y, w, h)
+        self.setWindowOpacity(ov.get("opacity", 0.95))
 
-            opacity = ov.get("opacity", 0.85)
-            self.setWindowOpacity(opacity)
+    # ── Paint ──────────────────────────────────────────────────────────────
 
-            font_family = ov.get("font_family", "Segoe UI")
-            font_size = ov.get("font_size", 14)
-            font_color = ov.get("font_color", "#ffffff")
-            bg_color = ov.get("bg_color", "#171717")
-            bg_opacity = ov.get("bg_opacity", 0.8)
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+        ov = self._config.get("overlay", {}) if isinstance(self._config, dict) else {}
+
+        # ── Translation area (top) ──
+        bg_color = ov.get("bg_color", "#000000")
+        bg_opacity = ov.get("bg_opacity", 0.85)
+        r, g, b = self._hex_to_rgb(bg_color)
+        alpha = int(bg_opacity * 255)
+
+        trans_h = min(TRANSLATION_HEIGHT, h // 2)
+        p.setBrush(QBrush(QColor(r, g, b, alpha)))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(0, 0, w, trans_h, 8, 8)
+        # Fill bottom part of translation area (remove rounded bottom corners)
+        if trans_h < h:
+            p.drawRect(0, trans_h - 8, w, 8)
+
+        # Draw translation text
+        font_color = ov.get("font_color", "#ffffff")
+        font_size = ov.get("font_size", 14)
+        font_family = ov.get("font_family", "Segoe UI")
+        fc = QColor(font_color)
+        p.setPen(fc)
+        font = QFont(font_family, font_size)
+        p.setFont(font)
+
+        text_flags = Qt.AlignmentFlag.AlignVCenter
+        if self._rtl:
+            text_flags |= Qt.AlignmentFlag.AlignRight
         else:
-            self.setGeometry(100, 100, 500, 150)
-            font_family = "Segoe UI"
-            font_size = 14
-            font_color = "#ffffff"
-            bg_color = "#171717"
-            bg_opacity = 0.8
+            text_flags |= Qt.AlignmentFlag.AlignLeft
 
-        bg_r, bg_g, bg_b = self._hex_to_rgb(bg_color)
-        bg_alpha = int(bg_opacity * 255)
+        text_rect = QRect(10, 0, w - 20, trans_h)
+        p.drawText(text_rect, text_flags | Qt.TextFlag.TextWordWrap, self._translation_text)
 
-        self._container.setStyleSheet(f"""
-            #overlayContainer {{
-                background-color: rgba({bg_r}, {bg_g}, {bg_b}, {bg_alpha});
-                border-radius: 10px;
-            }}
-        """)
+        # ── OCR area (bottom) — transparent with dashed border ──
+        ocr_rect = QRect(0, trans_h, w, h - trans_h)
+        p.setBrush(QBrush(QColor(0, 0, 0, 15)))  # barely visible
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRect(ocr_rect)
 
-        self._text_label.setStyleSheet(f"""
-            #translationText {{
-                color: {font_color};
-                font-family: '{font_family}';
-                font-size: {font_size}px;
-                background: transparent;
-                padding: 4px;
-            }}
-        """)
+        # Dashed border around OCR area
+        pen = QPen(QColor(255, 255, 255, 80))
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setWidth(1)
+        p.setPen(pen)
+        p.drawRect(ocr_rect.adjusted(0, 0, -1, -1))
 
-        self._branding.setStyleSheet("""
-            #branding {
-                color: rgba(255, 255, 255, 0.4);
-                font-size: 9px;
-                background: transparent;
-            }
-        """)
+        # Resize handle (bottom-right)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 100)))
+        for i in range(3):
+            offset = i * 4
+            p.drawLine(
+                w - HANDLE_SIZE + offset, h - 2,
+                w - 2, h - HANDLE_SIZE + offset
+            )
+
+        # Small label in OCR area
+        p.setPen(QColor(255, 255, 255, 60))
+        small_font = QFont("Segoe UI", 8)
+        p.setFont(small_font)
+        p.drawText(QRect(4, trans_h + 2, w - 8, 16),
+                   Qt.AlignmentFlag.AlignLeft, "🌐 OCR Region")
+
+        p.end()
+
+    # ── Public API ─────────────────────────────────────────────────────────
+
+    def set_text(self, text: str):
+        self._translation_text = text
+        self.update()
+
+    def set_rtl(self, rtl: bool):
+        self._rtl = rtl
+        self.update()
 
     def set_font_size(self, size: int):
-        font = self._text_label.font()
-        font.setPointSize(size)
-        self._text_label.setFont(font)
-        self._config["overlay"]["font_size"] = size
+        if isinstance(self._config, dict):
+            self._config.setdefault("overlay", {})["font_size"] = size
+        self.update()
 
     def set_font_color(self, color: str):
-        self._text_label.setStyleSheet(f"color: {color}; background: transparent;")
-        self._config["overlay"]["font_color"] = color
+        if isinstance(self._config, dict):
+            self._config.setdefault("overlay", {})["font_color"] = color
+        self.update()
 
     def set_bg_color(self, color: str, opacity: float = None):
-        self._config["overlay"]["bg_color"] = color
-        bg_opacity = opacity if opacity is not None else self._config.get("overlay", {}).get("bg_opacity", 0.8)
-        bg_r, bg_g, bg_b = self._hex_to_rgb(color)
-        bg_alpha = int(bg_opacity * 255)
-        self._container.setStyleSheet(f"""
-            #overlayContainer {{
-                background-color: rgba({bg_r}, {bg_g}, {bg_b}, {bg_alpha});
-                border-radius: 10px;
-            }}
-        """)
+        if isinstance(self._config, dict):
+            self._config.setdefault("overlay", {})["bg_color"] = color
+            if opacity is not None:
+                self._config["overlay"]["bg_opacity"] = opacity
+        self.update()
 
     def set_opacity(self, opacity: float):
         self.setWindowOpacity(opacity)
-        self._config["overlay"]["opacity"] = opacity
+        if isinstance(self._config, dict):
+            self._config.setdefault("overlay", {})["opacity"] = opacity
 
-    def set_text(self, text: str):
-        self._fade_anim.stop()
-        self._fade_anim.setStartValue(0.0)
-        self._fade_anim.setEndValue(1.0)
-        self._text_label.setText(text)
-        self._fade_anim.start()
-
-    def set_rtl(self, rtl: bool):
-        if rtl:
-            self._text_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
-            self._text_label.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        else:
-            self._text_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-            self._text_label.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-
-    def update_appearance(self, font_family: str, font_size: int, font_color: str,
-                          bg_color: str, bg_opacity: float, window_opacity: float):
-        bg_r, bg_g, bg_b = self._hex_to_rgb(bg_color)
-        bg_alpha = int(bg_opacity * 255)
-
-        self._container.setStyleSheet(f"""
-            #overlayContainer {{
-                background-color: rgba({bg_r}, {bg_g}, {bg_b}, {bg_alpha});
-                border-radius: 10px;
-            }}
-        """)
-        self._text_label.setStyleSheet(f"""
-            #translationText {{
-                color: {font_color};
-                font-family: '{font_family}';
-                font-size: {font_size}px;
-                background: transparent;
-                padding: 4px;
-            }}
-        """)
+    def update_appearance(self, font_family, font_size, font_color, bg_color, bg_opacity, window_opacity):
+        if isinstance(self._config, dict):
+            ov = self._config.setdefault("overlay", {})
+            ov.update({
+                "font_family": font_family, "font_size": font_size,
+                "font_color": font_color, "bg_color": bg_color,
+                "bg_opacity": bg_opacity,
+            })
         self.setWindowOpacity(window_opacity)
+        self.update()
+
+    def get_ocr_region(self):
+        """Return (x, y, w, h) of the OCR area (bottom part of overlay)"""
+        geo = self.geometry()
+        trans_h = min(TRANSLATION_HEIGHT, geo.height() // 2)
+        return (
+            geo.x(),
+            geo.y() + trans_h,
+            geo.width(),
+            geo.height() - trans_h
+        )
 
     def save_position(self):
         geo = self.geometry()
-        self._config["overlay"]["x"] = geo.x()
-        self._config["overlay"]["y"] = geo.y()
-        self._config["overlay"]["width"] = geo.width()
-        self._config["overlay"]["height"] = geo.height()
+        if isinstance(self._config, dict):
+            ov = self._config.setdefault("overlay", {})
+            ov.update({"x": geo.x(), "y": geo.y(), "width": geo.width(), "height": geo.height()})
+        # Notify OCR to update region
+        x, y, w, h = self.get_ocr_region()
+        self.region_changed.emit(x, y, w, h)
+
+    # ── Mouse Events ────────────────────────────────────────────────────────
+
+    def _in_resize_zone(self, pos):
+        return (pos.x() > self.width() - HANDLE_SIZE * 2 and
+                pos.y() > self.height() - HANDLE_SIZE * 2)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            if self._in_resize_zone(event.pos()):
+                self._resizing = True
+                self._resize_start = event.globalPosition().toPoint()
+                self._resize_geo = self.geometry()
+                self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            else:
+                self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
 
     def mouseMoveEvent(self, event):
-        if self._drag_pos is not None and event.buttons() & Qt.MouseButton.LeftButton:
+        if self._resizing and self._resize_start:
+            delta = event.globalPosition().toPoint() - self._resize_start
+            new_w = max(200, self._resize_geo.width() + delta.x())
+            new_h = max(100, self._resize_geo.height() + delta.y())
+            self.setGeometry(self._resize_geo.x(), self._resize_geo.y(), new_w, new_h)
+            self.update()
+        elif self._drag_pos is not None:
             self.move(event.globalPosition().toPoint() - self._drag_pos)
-            event.accept()
+        else:
+            if self._in_resize_zone(event.pos()):
+                self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            else:
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+        event.accept()
 
     def mouseReleaseEvent(self, event):
         self._drag_pos = None
+        self._resizing = False
+        self._resize_start = None
+        self._resize_geo = None
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
         self.save_position()
+        event.accept()
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         menu.setStyleSheet("""
-            QMenu {
-                background-color: #1e1e1e;
-                color: #ffffff;
-                border: 1px solid #0f3460;
-                border-radius: 6px;
-                padding: 4px;
-            }
-            QMenu::item {
-                padding: 6px 20px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #0f3460;
-            }
+            QMenu { background: #1e1e1e; color: #fff; border: 1px solid #333;
+                    border-radius: 6px; padding: 4px; }
+            QMenu::item { padding: 6px 18px; border-radius: 4px; }
+            QMenu::item:selected { background: #0f3460; }
         """)
-
-        settings_action = menu.addAction("Settings")
-        pause_action = menu.addAction("Toggle Pause")
+        settings_act = menu.addAction("⚙️ Settings")
         menu.addSeparator()
-        exit_action = menu.addAction("Exit")
-
+        exit_act = menu.addAction("✕ Exit")
         action = menu.exec(event.globalPos())
-        if action == settings_action:
+        if action == settings_act:
             self._on_settings_requested()
-        elif action == pause_action:
-            self._on_pause_requested()
-        elif action == exit_action:
+        elif action == exit_act:
             QApplication.quit()
 
     def _on_settings_requested(self):
         pass
 
-    def _on_pause_requested(self):
+    def set_settings_callback(self, cb):
+        self._on_settings_requested = cb
+
+    def set_pause_callback(self, cb):
         pass
 
-    def set_settings_callback(self, callback):
-        self._on_settings_requested = callback
-
-    def set_pause_callback(self, callback):
-        self._on_pause_requested = callback
-
     @staticmethod
-    def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
-        hex_color = hex_color.lstrip("#")
-        if len(hex_color) == 6:
-            return int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
-        return 23, 23, 23
+    def _hex_to_rgb(hex_color: str):
+        h = hex_color.lstrip("#")
+        if len(h) == 6:
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return 0, 0, 0

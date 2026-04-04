@@ -243,6 +243,7 @@ class MainWindow(QMainWindow):
 
         # Overlay
         self.overlay = OverlayWindow(self.config.data)
+        self.overlay.region_changed.connect(self._on_overlay_region_changed)
 
         # Load i18n
         ui_lang = self.config.get("ui_language", "en")
@@ -680,6 +681,11 @@ class MainWindow(QMainWindow):
 
     def _on_ocr_region_selected(self, x, y, w, h):
         """Called when user selects an OCR region."""
+        self.config.set("ocr_region", [x, y, w, h])
+        self.ocr_capture.set_region((x, y, w, h))
+
+    def _on_overlay_region_changed(self, x, y, w, h):
+        """Called when overlay is moved/resized - update OCR region"""
         self.config.set("ocr_region", [x, y, w, h])
         self.ocr_capture.set_region((x, y, w, h))
 
